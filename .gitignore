@@ -1,0 +1,7 @@
+# simulation build artifacts
+obj_dir/
+obj_regfe/
+obj_nowb/
+*.log
+*.vcd
+*.fst
