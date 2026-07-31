@@ -2,6 +2,11 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
+// RTL revision : 4FE-safe-v3
+// Experiment   : E004
+// Based on     : 4FE-safe-v2 / E003
+// Changes      : conservative critical marking independent of res_known
+//
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
 // =============================================================================
@@ -28,8 +33,8 @@ module ff_ingress #(
   output wire [3:0]      slot_wtg_o,
   output wire [3:0]      slot_isdep_o,
   output wire [D-1:0]    alloc_oh_o,
-  // critical marking (a newly waiting dependent makes its target critical)
-  output wire [3:0]      kw_vld_o,      // k valid && waiting
+  // critical marking (a new dependent makes its target critical)
+  output wire [3:0]      kw_vld_o,      // k valid && dependent
   output wire [4*AW-1:0] k_tgt_f
 );
 
@@ -180,7 +185,11 @@ module ff_ingress #(
   endgenerate
   generate
     for (gi = 0; gi < 4; gi = gi + 1) begin : g_pw
-      assign kw_vld_o[gi]          = (gi[2:0] < acnt) && k_wtg[gi];
+      // Mark every allocated dependency target critical.  Previously this
+      // used k_wtg, which put sched/pre_idx -> res_known on the ROB crit_q
+      // clock-enable path.  Over-marking an already-resolved target is safe:
+      // crit_q only changes priority while that target is still ready.
+      assign kw_vld_o[gi]          = (gi[2:0] < acnt) && k_isdep[gi];
       assign k_tgt_f[gi*AW +: AW]  = k_tgt[gi];
     end
   endgenerate

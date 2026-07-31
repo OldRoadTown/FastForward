@@ -25,6 +25,7 @@
 | no-bypass-dual | 0 | 0 | 1 | 隔离 bypass 影响 |
 | safe-v1 | 0 | 0 | 0 | 当前默认综合配置 |
 | safe-v2 | 0 | 0 | 0 | registered commit + in-flight mask |
+| safe-v3 | 0 | 0 | 0 | 分层选择；关闭偷取；关键标记/egress 门控解耦 |
 
 ## 结果
 
@@ -33,7 +34,8 @@
 | E000 | `52459edf4aea5b5b43a00e2c6a3ba1382d27c2f8` | full | 5601 | — | — | 0.2650 | 1.0609 | -0.7959 | — | — | — | — | `pk_lat_q → issue → sched → rob → pick → rob` |
 | E001 | `52459edf4aea5b5b43a00e2c6a3ba1382d27c2f8` | no-bypass-dual | 6001 | 9932 | 24963 | 0.2650 | 0.8119 | -0.5469 | — | — | — | — | `old_u_q → pick → clk_gate_pk_idx_q latch` |
 | E002 | `8bd02b6ec7843d99faaf8c1b4e256a1aaa2f980c` | safe-v1 | 6001 | 9932 | 24963 | 0.2650 | 0.7933 | -0.5283 | — | — | — | — | `old_u_q → pick → rob → clk_gate_iss_q latch` |
-| E003 | `d3f4b65160a57aa1e17225440959027b56f6ea7b` | safe-v2 | 6001 | 9932 | 24963 | — | — | — | — | — | — | — | registered commit；通用 Yosys 4718 cells；等待内网综合 |
+| E003 | `d3f4b65160a57aa1e17225440959027b56f6ea7b` | safe-v2 | 6001 | 9932 | 24963 | 0.2893 | 0.8542 | -0.5649 | — | — | — | — | worst `pick/pk_idx_q[2] → pk_idx_f[16] → pick/pk_idx_q[3]`；另有 `pick → ingress/res_known → rob/crit_q` -0.1207 ns、`sched → egress/res_now → lane_d ICG/E` -0.1166 ns |
+| E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；通用 Yosys 全设计 265076 cells（对 E003 +0.38%），picker 最长拓扑深度 135→61；lane data 常写可能增加动态功耗，必须回填 Power 后判断是否保留 |
 
 ## 分支与提交约定
 
@@ -41,5 +43,7 @@
 - `timing/4fe-pick-safe-v1`：当前 timing-safe 版本。
 - `timing/4fe-pick-commit-v2`：从 safe-v1 创建，切断
   `old_u_q → pick → rob/iss_q` 路径；不要覆盖 v1。
+- `timing/4fe-hier-pick-v3`：从 safe-v2 创建，针对 E003 的三组
+  新关键路径；safe 配置关闭偷取，dual/full 配置仍可开启双偷取。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。

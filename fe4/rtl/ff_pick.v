@@ -1,12 +1,18 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// Per latency class: the two oldest ready candidates are found with parallel
-// priority encodes on even/odd rotated positions; a packet some dependent is
+// RTL revision : 4FE-safe-v3
+// Experiment   : E004
+// Based on     : 4FE-safe-v2 / E003
+// Changes      : 8x8 hierarchical age selection; safe profile disables steal
+//
+// Per latency class: the two oldest ready candidates are found with
+// hierarchical bank/local priority selection; a packet some dependent is
 // waiting on (critical) jumps the queue (unless the age-oldest candidate is
 // the very window head). If a class has a backlog (2nd candidate) while
-// another FE is idle, the idle FE steals it. DUAL_STEAL optionally enables a
-// second matcher; the timing-safe default keeps only the first matcher.
+// another FE is idle, the idle FE may steal it. DUAL_STEAL=0 disables both
+// matchers for the timing-safe profile; DUAL_STEAL=1 enables both matchers in
+// the throughput/full profiles.
 // gated by exact output-slot conflict checks against the ff_sched booking.
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
@@ -34,23 +40,71 @@ module ff_pick #(
   output wire [D*2-1:0]      rob_src_f     // FE each entry was issued to
 );
 
-  function [D-1:0] rotrD;
-    input [D-1:0]  v;
-    input [AW-1:0] s;
-    reg [2*D-1:0] t;
+  function [3:0] pe8;
+    input [7:0] v;
+    integer i;
     begin
-      t     = {v, v} >> s;
-      rotrD = t[D-1:0];
+      pe8 = 4'b0;
+      for (i = 7; i >= 0; i = i - 1)
+        if (v[i]) pe8 = {1'b1, i[2:0]};
     end
   endfunction
 
-  function [AW:0] peD;
-    input [D-1:0] v;
-    integer i;
+  function [7:0] rotr8;
+    input [7:0] v;
+    input [2:0] s;
+    reg [15:0] t;
     begin
-      peD = {(AW+1){1'b0}};
-      for (i = D-1; i >= 0; i = i - 1)
-        if (v[i]) peD = {1'b1, i[AW-1:0]};
+      t = {v, v} >> s;
+      rotr8 = t[7:0];
+    end
+  endfunction
+
+  // Oldest set entry relative to base.  Each physical 8-entry bank has one
+  // local PE; an 8-bit bank-valid vector then selects the first bank after the
+  // base bank.  The base bank is split into post-base and pre-base pieces so
+  // wraparound ordering remains exact.  Return value is {valid, physical idx}.
+  function [AW:0] peH;
+    input [D-1:0]  v;
+    input [AW-1:0] base;
+    integer b;
+    reg [31:0] bank_pe_f;
+    reg [7:0]  bank_v;
+    reg [7:0]  base_bits, post_mask;
+    reg [7:0]  bank_rot;
+    reg [3:0]  post_pe, pre_pe, bank_pe, local_pe;
+    reg [2:0]  base_bank, next_bank, other_bank;
+    begin
+      bank_pe_f = 32'b0;
+      bank_v    = 8'b0;
+      for (b = 0; b < 8; b = b + 1) begin
+        bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
+        bank_v[b] = bank_pe_f[b*4+3];
+      end
+
+      base_bank = base[5:3];
+      base_bits = v[base_bank*8 +: 8];
+      post_mask = 8'hff << base[2:0];
+      post_pe   = pe8(base_bits & post_mask);
+      pre_pe    = pe8(base_bits & ~post_mask);
+
+      // Search complete banks beginning with base_bank+1.  The base bank is
+      // cleared because its pre-base portion is the final wraparound group.
+      bank_v[base_bank] = 1'b0;
+      next_bank  = base_bank + 3'd1;
+      bank_rot   = rotr8(bank_v, next_bank);
+      bank_pe    = pe8(bank_rot);
+      other_bank = bank_pe[2:0] + next_bank;
+      local_pe   = bank_pe_f[other_bank*4 +: 4];
+
+      if (post_pe[3])
+        peH = {1'b1, base_bank, post_pe[2:0]};
+      else if (bank_pe[3])
+        peH = {1'b1, other_bank, local_pe[2:0]};
+      else if (pre_pe[3])
+        peH = {1'b1, base_bank, pre_pe[2:0]};
+      else
+        peH = {(AW+1){1'b0}};
     end
   endfunction
 
@@ -102,13 +156,13 @@ module ff_pick #(
   end
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
-  // Mask those in-flight entries so the next I0 selection cannot pick them
-  // again while the ROB state catches up.
+  // The one-hot mask preserves v2 scheduling behavior; the timing reduction
+  // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
   wire [D-1:0] rdy_avail = rdy_q & ~picked;
   wire [D-1:0] rdy_eff   = rdy_avail
                            | (WAKE_BYPASS ? wake_now : {D{1'b0}});
-  localparam [D-1:0] MASK_EVEN = {32{2'b01}};
-  wire [D-1:0] crit_rot = rotrD(crit_q, rbase);
+  localparam [D-1:0] MASK_PHYS_EVEN = {32{2'b01}};
+  wire [D-1:0] mask_age_even = rbase[0] ? ~MASK_PHYS_EVEN : MASK_PHYS_EVEN;
 
   // -------------------------------------------------------------------------
   // per class: two oldest ready candidates + critical-first primary
@@ -127,23 +181,25 @@ module ff_pick #(
         for (ce = 0; ce < D; ce = ce + 1)
           cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
       end
-      wire [D-1:0] rot  = rotrD(cand, rbase);
-      wire [AW:0]  pee  = peD(rot & MASK_EVEN);
-      wire [AW:0]  peo  = peD(rot & ~MASK_EVEN);
-      wire [AW:0]  pec  = peD(rot & crit_rot);   // oldest critical candidate
+      wire [AW:0]  pee  = peH(cand & mask_age_even, rbase);
+      wire [AW:0]  peo  = peH(cand & ~mask_age_even, rbase);
+      wire [AW:0]  pec  = peH(cand & crit_q, rbase);
+                                                    // oldest critical candidate
       wire         bothf  = pee[AW] & peo[AW];
-      wire         eolder = (pee[AW-1:0] < peo[AW-1:0]);
+      wire [AW-1:0] pee_age = pee[AW-1:0] - rbase;
+      wire [AW-1:0] peo_age = peo[AW-1:0] - rbase;
+      wire         eolder = (pee_age < peo_age);
       wire [AW:0]  page = bothf ? (eolder ? pee : peo)
                                 : (pee[AW] ? pee : peo);
       // critical-first: a packet some dependent waits on jumps the queue,
       // unless the age-oldest candidate is the very window head (pos 0)
-      wire [AW:0]  pri = (pec[AW] && (page[AW-1:0] != {AW{1'b0}})) ? pec
-                                                                   : page;
+      wire [AW:0]  pri = (pec[AW] && (page[AW-1:0] != rbase)) ? pec
+                                                              : page;
       wire [AW:0]  sec = (pri == pee) ? peo : pee;
       assign fnd_raw[gf] = pri[AW];
-      assign sel_idx[gf] = pri[AW-1:0] + rbase;
+      assign sel_idx[gf] = pri[AW-1:0];
       assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
-      assign sec_sel[gf] = sec[AW-1:0] + rbase;
+      assign sec_sel[gf] = sec[AW-1:0];
     end
   endgenerate
 
@@ -214,10 +270,10 @@ module ff_pick #(
       if (!fnd[rr] && !stcfl(sched_v[rr], pk_v_int[rr], pk_lat_q[rr], st1_dc)) begin
         st1_rv = 1'b1; st1_rr = rr[1:0];
       end
-    // stealing assumes issue = pick+1 for its slot bookkeeping; with the
-    // REG_FEIN fallback (issue = pick+2) disable stealing entirely - the
-    // remaining pure latency-binding is structurally collision-free
-    st1_v = st1_dv & st1_rv & (REG_FEIN == 0);
+    // Stealing assumes issue = pick+1 for its slot bookkeeping.  The E004
+    // timing-safe profile also disables it to remove lane-to-lane picker
+    // feedback; DUAL_STEAL=1 preserves both matchers for throughput A/B.
+    st1_v = st1_dv & st1_rv & (REG_FEIN == 0) & (DUAL_STEAL != 0);
 
     // matcher 2: donor scanned 0->3 (must differ), receiver scanned 3->0
     st2_dv = 1'b0; st2_dc = 2'd0; st2_didx = {AW{1'b0}};
@@ -232,7 +288,7 @@ module ff_pick #(
         st2_rv = 1'b1; st2_rr = rr[1:0];
       end
     st2_v = st2_dv & st2_rv & st1_v & (DUAL_STEAL != 0);
-                                                // matcher 2 is optional
+                                                // matcher 2 follows matcher 1
   end
 
   // -------------------------------------------------------------------------
