@@ -26,6 +26,7 @@
 | safe-v1 | 0 | 0 | 0 | 当前默认综合配置 |
 | safe-v2 | 0 | 0 | 0 | registered commit + in-flight mask |
 | safe-v3 | 0 | 0 | 0 | 分层选择；关闭偷取；关键标记/egress 门控解耦 |
+| safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 
 ## 结果
 
@@ -35,7 +36,8 @@
 | E001 | `52459edf4aea5b5b43a00e2c6a3ba1382d27c2f8` | no-bypass-dual | 6001 | 9932 | 24963 | 0.2650 | 0.8119 | -0.5469 | — | — | — | — | `old_u_q → pick → clk_gate_pk_idx_q latch` |
 | E002 | `8bd02b6ec7843d99faaf8c1b4e256a1aaa2f980c` | safe-v1 | 6001 | 9932 | 24963 | 0.2650 | 0.7933 | -0.5283 | — | — | — | — | `old_u_q → pick → rob → clk_gate_iss_q latch` |
 | E003 | `d3f4b65160a57aa1e17225440959027b56f6ea7b` | safe-v2 | 6001 | 9932 | 24963 | 0.2893 | 0.8542 | -0.5649 | — | — | — | — | worst `pick/pk_idx_q[2] → pk_idx_f[16] → pick/pk_idx_q[3]`；另有 `pick → ingress/res_known → rob/crit_q` -0.1207 ns、`sched → egress/res_now → lane_d ICG/E` -0.1166 ns |
-| E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；通用 Yosys 全设计 265076 cells（对 E003 +0.38%），picker 最长拓扑深度 135→61；lane data 常写可能增加动态功耗，必须回填 Power 后判断是否保留 |
+| E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
+| E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；通用 Yosys 全设计 266102 cells（对 E004 +0.39%），picker 最长拓扑深度 61→60 且起点由 pk_idx_q 变为 rdy_q；safe/dual/full 与 E004 cycles 完全一致 |
 
 ## 分支与提交约定
 
@@ -45,5 +47,7 @@
   `old_u_q → pick → rob/iss_q` 路径；不要覆盖 v1。
 - `timing/4fe-hier-pick-v3`：从 safe-v2 创建，针对 E003 的三组
   新关键路径；safe 配置关闭偷取，dual/full 配置仍可开启双偷取。
+- `timing/4fe-picked-bitmap-v4`：从 safe-v3 创建，切断
+  `pk_idx_q → picked → next-pick/old_u`，并去除 crit/outp 的逐位 ICG 使能。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
