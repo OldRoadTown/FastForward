@@ -2,6 +2,8 @@
 obj_dir/
 obj_regfe/
 obj_nowb/
+obj_dual/
+obj_full/
 *.log
 *.vcd
 *.fst
