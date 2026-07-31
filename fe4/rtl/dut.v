@@ -23,7 +23,8 @@
 // =============================================================================
 module dut #(
   parameter REG_FEIN    = 0,
-  parameter WAKE_BYPASS = 1
+  parameter WAKE_BYPASS = 0,
+  parameter DUAL_STEAL  = 0
 )(
   input  wire         clk,
   input  wire         rst_n,
@@ -184,7 +185,8 @@ module dut #(
   );
 
   ff_pick #(.D(D), .AW(AW), .NFE(NFE),
-            .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN)) u_pick (
+            .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
+            .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
