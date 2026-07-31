@@ -2,6 +2,11 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
+// RTL revision : 4FE-safe-v4
+// Experiment   : E005
+// Based on     : 4FE-safe-v3 / E004
+// Changes      : vector next-state updates for crit_q/outp_q without ICG enables
+//
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
 // per packet) and is RETAINED after output until the entry is re-allocated,
@@ -188,17 +193,39 @@ module ff_rob #(
     else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH);
   end
 
+  // E005 updates these control vectors every cycle through their D inputs.
+  // This preserves the original precedence (critical set beats alloc clear;
+  // alloc clear beats pop set) without placing k_tgt/pop_oh on per-bit clock
+  // gate enables.
+  reg [D-1:0] crit_set_oh;
+  integer ck;
+  always @* begin
+    crit_set_oh = {D{1'b0}};
+    for (ck = 0; ck < 4; ck = ck + 1)
+      if (kw_vld[ck]) crit_set_oh[k_tgt[ck]] = 1'b1;
+  end
+  wire [D-1:0] crit_n = (crit_q & ~alloc_oh) | crit_set_oh;
+  wire [D-1:0] outp_n = (outp_q | pop_oh) & ~alloc_oh;
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      crit_q <= {D{1'b0}};
+      outp_q <= {D{1'b0}};
+    end else begin
+      crit_q <= crit_n;
+      outp_q <= outp_n;
+    end
+  end
+
   // -------------------------------------------------------------------------
   // state update
   // -------------------------------------------------------------------------
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       rdy_q       <= {D{1'b0}};
-      crit_q      <= {D{1'b0}};
       wtg_q       <= {D{1'b0}};
       iss_q       <= {D{1'b0}};
       resv_q      <= {D{1'b0}};
-      outp_q      <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
       old_u_q     <= {SW{1'b0}};
@@ -207,10 +234,8 @@ module ff_rob #(
         if (alloc_oh[e]) begin
           rdy_q[e]  <= slot_rdy[e[1:0]];
           wtg_q[e]  <= slot_wtg[e[1:0]];
-          crit_q[e] <= 1'b0;
           iss_q[e]  <= 1'b0;
           resv_q[e] <= 1'b0;
-          outp_q[e] <= 1'b0;
         end else begin
           if (picked[e]) begin
             rdy_q[e] <= 1'b0;
@@ -220,14 +245,7 @@ module ff_rob #(
           end
           if (wake_now[e])  wtg_q[e]  <= 1'b0;
           if (res_now_r[e]) resv_q[e] <= 1'b1;
-          if (pop_oh[e])    outp_q[e] <= 1'b1;
         end
-      end
-      // mark dependency targets of newly waiting packets as critical
-      // (placed after the entry loop: overrides the alloc-clear when the
-      //  target is allocated in the same cycle)
-      for (e = 0; e < 4; e = e + 1) begin
-        if (kw_vld[e]) crit_q[k_tgt[e]] <= 1'b1;
       end
       alloc_seq_q <= alloc_seq_q + {4'b0, acnt};
       out_seq_q   <= out_seq_q + {4'b0, pop_cnt};

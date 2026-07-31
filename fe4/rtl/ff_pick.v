@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v3
-// Experiment   : E004
-// Based on     : 4FE-safe-v2 / E003
-// Changes      : 8x8 hierarchical age selection; safe profile disables steal
+// RTL revision : 4FE-safe-v4
+// Experiment   : E005
+// Based on     : 4FE-safe-v3 / E004
+// Changes      : registered picked bitmap cuts index-decode feedback
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -33,7 +33,7 @@ module ff_pick #(
   input  wire [D*2-1:0]      rob_lat_f,
   input  wire [AW-1:0]       rbase,        // oldest un-issued index
   input  wire [NFE*4-1:0]    sched_v_f,    // output-slot booking (ff_sched)
-  output reg  [D-1:0]        picked,
+  output wire [D-1:0]        picked,
   output reg  [NFE-1:0]      pk_v_q,       // registered (I0 -> I1)
   output wire [NFE*AW-1:0]   pk_idx_f,
   output wire [NFE*2-1:0]    pk_lat_f,
@@ -143,17 +143,12 @@ module ff_pick #(
   reg [NFE-1:0] pk_v_int;
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
+  reg [D-1:0]   picked_q;
 
-  // Commit the picks already held in the I0->I1 registers.  The old
-  // combinational picked path crossed the complete age/class selection cone
-  // and then drove ROB iss_q clock enables in the same cycle.  Building the
-  // bitmap from registered picks cuts that path at the ff_pick boundary.
-  integer pf;
-  always @* begin
-    picked = {D{1'b0}};
-    for (pf = 0; pf < NFE; pf = pf + 1)
-      if (pk_v_int[pf]) picked[pk_idx_q[pf]] = 1'b1;
-  end
+  // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
+  // registers describe the same picks, but pk_idx_q no longer passes through
+  // a 6-to-64 decode before feeding the next picker or ROB old_u logic.
+  assign picked = picked_q;
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
   // The one-hot mask preserves v2 scheduling behavior; the timing reduction
@@ -294,18 +289,13 @@ module ff_pick #(
   // -------------------------------------------------------------------------
   // pick registers + issue-FE record
   // -------------------------------------------------------------------------
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) pk_v_int <= {NFE{1'b0}};
-    else begin
-      for (f = 0; f < NFE; f = f + 1)
-        pk_v_int[f] <= fnd[f] | (st1_v && (st1_rr == f[1:0]))
-                              | (st2_v && (st2_rr == f[1:0]));
-    end
-  end
+  reg [NFE-1:0] pk_v_n;
   reg [AW-1:0] pk_idx_n [0:NFE-1];
   reg [1:0]    pk_lat_n [0:NFE-1];
   always @* begin
     for (f = 0; f < NFE; f = f + 1) begin
+      pk_v_n[f] = fnd[f] | (st1_v && (st1_rr == f[1:0]))
+                          | (st2_v && (st2_rr == f[1:0]));
       // pk_v_int qualifies both fields. Defaults are deliberately not the
       // previous register values, otherwise synthesis may infer clock enables
       // and place the full pick cone on clock-gating latch inputs.
@@ -318,6 +308,24 @@ module ff_pick #(
         pk_idx_n[f] = st2_didx;
         pk_lat_n[f] = st2_dc;
       end
+    end
+  end
+
+  reg [D-1:0] picked_n;
+  integer pf;
+  always @* begin
+    picked_n = {D{1'b0}};
+    for (pf = 0; pf < NFE; pf = pf + 1)
+      if (pk_v_n[pf]) picked_n[pk_idx_n[pf]] = 1'b1;
+  end
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      pk_v_int <= {NFE{1'b0}};
+      picked_q <= {D{1'b0}};
+    end else begin
+      pk_v_int <= pk_v_n;
+      picked_q <= picked_n;
     end
   end
   always @(posedge clk) begin
