@@ -5,7 +5,8 @@
 // priority encodes on even/odd rotated positions; a packet some dependent is
 // waiting on (critical) jumps the queue (unless the age-oldest candidate is
 // the very window head). If a class has a backlog (2nd candidate) while
-// another FE is idle, the idle FE steals it (up to two steals per cycle),
+// another FE is idle, the idle FE steals it. DUAL_STEAL optionally enables a
+// second matcher; the timing-safe default keeps only the first matcher.
 // gated by exact output-slot conflict checks against the ff_sched booking.
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
@@ -13,7 +14,8 @@ module ff_pick #(
   parameter D           = 64,
   parameter AW          = 6,
   parameter NFE         = 4,
-  parameter WAKE_BYPASS = 1,
+  parameter WAKE_BYPASS = 0,
+  parameter DUAL_STEAL  = 0,
   parameter REG_FEIN    = 0    // steal bookkeeping assumes issue = pick+1:
                                // with REG_FEIN (pick+2) stealing is disabled
 )(
@@ -158,7 +160,10 @@ module ff_pick #(
   end
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1)
-      if (sec_fnd[f]) sec_idx_q[f] <= sec_sel[f];
+      // sec_v_q qualifies sec_idx_q, so the index is don't-care when no
+      // secondary exists. Unconditional writes prevent a long pick condition
+      // from being implemented as an ICG enable path for these small controls.
+      sec_idx_q[f] <= sec_sel[f];
   end
 
   reg [NFE-1:0] don_ok;
@@ -210,7 +215,8 @@ module ff_pick #(
           && !stcfl(sched_v[rr], pk_v_int[rr], pk_lat_q[rr], st2_dc)) begin
         st2_rv = 1'b1; st2_rr = rr[1:0];
       end
-    st2_v = st2_dv & st2_rv & st1_v;   // matcher 2 only on top of matcher 1
+    st2_v = st2_dv & st2_rv & st1_v & (DUAL_STEAL != 0);
+                                                // matcher 2 is optional
   end
 
   // -------------------------------------------------------------------------
@@ -232,18 +238,28 @@ module ff_pick #(
                               | (st2_v && (st2_rr == f[1:0]));
     end
   end
+  reg [AW-1:0] pk_idx_n [0:NFE-1];
+  reg [1:0]    pk_lat_n [0:NFE-1];
+  always @* begin
+    for (f = 0; f < NFE; f = f + 1) begin
+      // pk_v_int qualifies both fields. Defaults are deliberately not the
+      // previous register values, otherwise synthesis may infer clock enables
+      // and place the full pick cone on clock-gating latch inputs.
+      pk_idx_n[f] = sel_idx[f];
+      pk_lat_n[f] = f[1:0];
+      if (st1_v && (st1_rr == f[1:0])) begin
+        pk_idx_n[f] = st1_didx;
+        pk_lat_n[f] = st1_dc;
+      end else if (st2_v && (st2_rr == f[1:0])) begin
+        pk_idx_n[f] = st2_didx;
+        pk_lat_n[f] = st2_dc;
+      end
+    end
+  end
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1) begin
-      if (st1_v && (st1_rr == f[1:0])) begin
-        pk_idx_q[f] <= st1_didx;
-        pk_lat_q[f] <= st1_dc;
-      end else if (st2_v && (st2_rr == f[1:0])) begin
-        pk_idx_q[f] <= st2_didx;
-        pk_lat_q[f] <= st2_dc;
-      end else if (fnd[f]) begin
-        pk_idx_q[f] <= sel_idx[f];
-        pk_lat_q[f] <= f[1:0];
-      end
+      pk_idx_q[f] <= pk_idx_n[f];
+      pk_lat_q[f] <= pk_lat_n[f];
     end
   end
 

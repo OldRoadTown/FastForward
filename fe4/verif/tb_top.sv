@@ -20,7 +20,10 @@
 `define REG_FEIN_V 0
 `endif
 `ifndef WAKE_BYPASS_V
-`define WAKE_BYPASS_V 1
+`define WAKE_BYPASS_V 0
+`endif
+`ifndef DUAL_STEAL_V
+`define DUAL_STEAL_V 0
 `endif
 
 module tb_top;
@@ -61,7 +64,8 @@ module tb_top;
   logic         fe_v [4];
   logic [127:0] fe_d [4];
 
-  dut #(.REG_FEIN(`REG_FEIN_V), .WAKE_BYPASS(`WAKE_BYPASS_V)) u_dut (
+  dut #(.REG_FEIN(`REG_FEIN_V), .WAKE_BYPASS(`WAKE_BYPASS_V),
+        .DUAL_STEAL(`DUAL_STEAL_V)) u_dut (
     .clk(clk), .rst_n(rst_n),
     .lane0_pkt_in_vld(li_v[0]), .lane0_pkt_in_data(li_d[0]), .lane0_pkt_in_ctrl(li_c[0]),
     .lane1_pkt_in_vld(li_v[1]), .lane1_pkt_in_data(li_d[1]), .lane1_pkt_in_ctrl(li_c[1]),
