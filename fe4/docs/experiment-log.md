@@ -9,12 +9,13 @@
 1. RTL 变化先提交，记录完整 Git SHA。
 2. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；
    任一项变化时新开一组实验，不与旧数据直接比较。
-3. 同时记录所有统一用例的 cycles，并计算
-   `T = clock_period × weighted_total_cycles`。
+3. 记录同一组统一评分用例的最终执行时间`T`；若正式环境按串行cycles计时，
+   则`T = t_clk × sum(cycles_i)`，否则直接采用评分器报告的最终时间。
 4. 记录 worst path 的 startpoint、endpoint、arrival、required 和
    slack；不能只记录 slack。
 5. Area、Power、T 均齐全后再计算
-   `score = 1 / (T^4 × Power × Area)`。
+   `Score = 1 / (T^2 × sqrt(Area × Power))`和
+   `Cost = T^4 × Area × Power`。
 6. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
 
 ## 配置

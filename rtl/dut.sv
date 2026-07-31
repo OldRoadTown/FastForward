@@ -1,7 +1,8 @@
 // =============================================================================
 // fast_forward top -- module name: dut
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score uses unified-suite execution time T:
+// Score = 1/(T^2*sqrt(Area*Power)); equivalent Cost = T^4*Area*Power.
 //
 // Key architecture decisions (see docs/design_spec.md):
 //   * 8 Forwarding Engines, latency-class bound:

@@ -1,7 +1,8 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, modular) -- dut -- Verilog-2001
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score uses unified-suite execution time T:
+// Score = 1/(T^2*sqrt(Area*Power)); equivalent Cost = T^4*Area*Power.
 //
 // Top level only flattens/unflattens ports and instantiates the stages:
 //   ff_ingress  S0/S1: PKTIN registers, compaction, dependency resolve, alloc

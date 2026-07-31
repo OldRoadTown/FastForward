@@ -1,7 +1,8 @@
 // =============================================================================
 // fast_forward top (4-FE out-of-order variant) -- module: dut -- Verilog-2001
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score uses unified-suite execution time T:
+// Score = 1/(T^2*sqrt(Area*Power)); equivalent Cost = T^4*Area*Power.
 //
 // Architecture (see fe4/docs/design_spec.md):
 //   * 4 Forwarding Engines. Primary binding: FE[L] serves latency class L
