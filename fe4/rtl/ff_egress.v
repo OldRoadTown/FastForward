@@ -1,10 +1,14 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
+// RTL revision : 4FE-safe-v3
+// Experiment   : E004
+// Based on     : 4FE-safe-v2 / E003
+// Changes      : free-running lane data registers; preserve same-cycle bypass
+//
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
-// arriving in this very cycle pops in the same cycle (FEOUT-bus bypass).
-// PKTOUT is a registered output (spec).
+// arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
 // =============================================================================
 module ff_egress #(
   parameter D   = 64,
@@ -42,7 +46,7 @@ module ff_egress #(
     end
   endgenerate
 
-  // contiguous-completion check (pop bypass: same-cycle results count)
+  // Same-cycle result bypass remains part of the completion check.
   wire [D-1:0] cmpl = resv_q | res_now;
 
   wire [AW-1:0] oidx0 = out_seq[AW-1:0];
@@ -76,7 +80,7 @@ module ff_egress #(
     if (pop_cnt > 3'd3) pop_oh[oidx3] = 1'b1;
   end
 
-  // lane mapping + data mux with same-cycle result bypass
+  // lane mapping + same-cycle result data mux
   reg [3:0]    out_act;
   reg [127:0]  out_dat [0:3];
   integer l;
@@ -99,7 +103,9 @@ module ff_egress #(
   end
   always @(posedge clk) begin
     for (l = 0; l < 4; l = l + 1)
-      if (out_act[l]) lane_d_f[l*128 +: 128] <= out_dat[l];
+      // lane_v qualifies lane_d_f.  Always writing the data removes the
+      // sched_idx/res_now -> out_act -> lane_d clock-gate enable path.
+      lane_d_f[l*128 +: 128] <= out_dat[l];
   end
 
 endmodule
