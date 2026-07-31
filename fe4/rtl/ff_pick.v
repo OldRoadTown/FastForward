@@ -86,13 +86,29 @@ module ff_pick #(
     end
   endgenerate
 
-  wire [D-1:0] rdy_eff  = rdy_q | (WAKE_BYPASS ? wake_now : {D{1'b0}});
-  localparam [D-1:0] MASK_EVEN = {32{2'b01}};
-  wire [D-1:0] crit_rot = rotrD(crit_q, rbase);
-
   reg [NFE-1:0] pk_v_int;
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
+
+  // Commit the picks already held in the I0->I1 registers.  The old
+  // combinational picked path crossed the complete age/class selection cone
+  // and then drove ROB iss_q clock enables in the same cycle.  Building the
+  // bitmap from registered picks cuts that path at the ff_pick boundary.
+  integer pf;
+  always @* begin
+    picked = {D{1'b0}};
+    for (pf = 0; pf < NFE; pf = pf + 1)
+      if (pk_v_int[pf]) picked[pk_idx_q[pf]] = 1'b1;
+  end
+
+  // A registered pick is not removed from rdy_q until its issue/commit edge.
+  // Mask those in-flight entries so the next I0 selection cannot pick them
+  // again while the ROB state catches up.
+  wire [D-1:0] rdy_avail = rdy_q & ~picked;
+  wire [D-1:0] rdy_eff   = rdy_avail
+                           | (WAKE_BYPASS ? wake_now : {D{1'b0}});
+  localparam [D-1:0] MASK_EVEN = {32{2'b01}};
+  wire [D-1:0] crit_rot = rotrD(crit_q, rbase);
 
   // -------------------------------------------------------------------------
   // per class: two oldest ready candidates + critical-first primary
@@ -170,7 +186,7 @@ module ff_pick #(
   integer dc;
   always @* begin
     for (dc = 0; dc < NFE; dc = dc + 1)
-      don_ok[dc] = sec_v_q[dc] && rdy_q[sec_idx_q[dc]]
+      don_ok[dc] = sec_v_q[dc] && rdy_avail[sec_idx_q[dc]]
                    && !(fnd[dc] && (sel_idx[dc] == sec_idx_q[dc]));
   end
 
@@ -220,16 +236,8 @@ module ff_pick #(
   end
 
   // -------------------------------------------------------------------------
-  // picked bitmap + pick registers + issue-FE record
+  // pick registers + issue-FE record
   // -------------------------------------------------------------------------
-  always @* begin
-    picked = {D{1'b0}};
-    for (f = 0; f < NFE; f = f + 1)
-      if (fnd[f]) picked[sel_idx[f]] = 1'b1;
-    if (st1_v) picked[st1_didx] = 1'b1;
-    if (st2_v) picked[st2_didx] = 1'b1;
-  end
-
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) pk_v_int <= {NFE{1'b0}};
     else begin
@@ -267,9 +275,7 @@ module ff_pick #(
   reg [1:0] rob_src [0:D-1];
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1)
-      if (fnd[f]) rob_src[sel_idx[f]] <= f[1:0];
-    if (st1_v) rob_src[st1_didx] <= st1_rr;
-    if (st2_v) rob_src[st2_didx] <= st2_rr;
+      if (pk_v_int[f]) rob_src[pk_idx_q[f]] <= f[1:0];
   end
 
   // -------------------------------------------------------------------------

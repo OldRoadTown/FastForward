@@ -164,8 +164,12 @@ module ff_rob #(
   reg [SW-1:0] adv_raw, dist_f;
   reg [D-1:0]  niss_rot;
   reg [AW:0]   ffz;
+  wire [D-1:0] iss_eff = iss_q | picked;
   always @* begin
-    niss_rot = rotrD(~iss_q, old_u_q[AW-1:0]);
+    // picked is now the registered issue/commit bitmap.  Include it in the
+    // look-ahead so delaying the ROB state write until issue does not add an
+    // extra cycle to oldest-unissued pointer advancement.
+    niss_rot = rotrD(~iss_eff, old_u_q[AW-1:0]);
     ffz      = peD(niss_rot);
     adv_raw  = ffz[AW] ? {1'b0, ffz[AW-1:0]} : 7'd64;
     dist_f   = alloc_seq_q - old_u_q;
