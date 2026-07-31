@@ -1,7 +1,8 @@
 // =============================================================================
 // fast_forward top (8-FE variant) -- module name: dut -- Verilog-2001
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score uses unified-suite execution time T:
+// Score = 1/(T^2*sqrt(Area*Power)); equivalent Cost = T^4*Area*Power.
 //
 // Verilog-2001 port of the validated SystemVerilog design (../rtl/dut.sv);
 // cycle-accurate identical behavior. Architecture (docs/design_spec.md):
