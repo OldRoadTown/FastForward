@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v4
-// Experiment   : E005
-// Based on     : 4FE-safe-v3 / E004
-// Changes      : registered picked bitmap cuts index-decode feedback
+// RTL revision : 4FE-safe-v5
+// Experiment   : E006
+// Based on     : 4FE-safe-v4 / E005
+// Changes      : single-primary selector in safe mode; dual path preserved
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -176,25 +176,39 @@ module ff_pick #(
         for (ce = 0; ce < D; ce = ce + 1)
           cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
       end
-      wire [AW:0]  pee  = peH(cand & mask_age_even, rbase);
-      wire [AW:0]  peo  = peH(cand & ~mask_age_even, rbase);
-      wire [AW:0]  pec  = peH(cand & crit_q, rbase);
-                                                    // oldest critical candidate
-      wire         bothf  = pee[AW] & peo[AW];
-      wire [AW-1:0] pee_age = pee[AW-1:0] - rbase;
-      wire [AW-1:0] peo_age = peo[AW-1:0] - rbase;
-      wire         eolder = (pee_age < peo_age);
-      wire [AW:0]  page = bothf ? (eolder ? pee : peo)
-                                : (pee[AW] ? pee : peo);
-      // critical-first: a packet some dependent waits on jumps the queue,
-      // unless the age-oldest candidate is the very window head (pos 0)
-      wire [AW:0]  pri = (pec[AW] && (page[AW-1:0] != rbase)) ? pec
-                                                              : page;
-      wire [AW:0]  sec = (pri == pee) ? peo : pee;
-      assign fnd_raw[gf] = pri[AW];
-      assign sel_idx[gf] = pri[AW-1:0];
-      assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
-      assign sec_sel[gf] = sec[AW-1:0];
+      if (DUAL_STEAL == 0) begin : g_safe
+        // The safe profile never consumes a secondary candidate.  Selecting
+        // one oldest primary directly removes the even/odd dual PEs, their age
+        // compare, and the unused secondary feedback from the critical cone.
+        wire [AW:0] page = peH(cand, rbase);
+        wire [AW:0] pec  = peH(cand & crit_q, rbase);
+        wire [AW:0] pri  = (pec[AW] && (page[AW-1:0] != rbase))
+                             ? pec : page;
+        assign fnd_raw[gf] = pri[AW];
+        assign sel_idx[gf] = pri[AW-1:0];
+        assign sec_fnd[gf] = 1'b0;
+        assign sec_sel[gf] = {AW{1'b0}};
+      end else begin : g_dual
+        // Dual/full profiles retain two parity candidates for work stealing.
+        wire [AW:0]  pee  = peH(cand & mask_age_even, rbase);
+        wire [AW:0]  peo  = peH(cand & ~mask_age_even, rbase);
+        wire [AW:0]  pec  = peH(cand & crit_q, rbase);
+        wire         bothf  = pee[AW] & peo[AW];
+        wire [AW-1:0] pee_age = pee[AW-1:0] - rbase;
+        wire [AW-1:0] peo_age = peo[AW-1:0] - rbase;
+        wire         eolder = (pee_age < peo_age);
+        wire [AW:0]  page = bothf ? (eolder ? pee : peo)
+                                  : (pee[AW] ? pee : peo);
+        // critical-first: a packet some dependent waits on jumps the queue,
+        // unless the age-oldest candidate is the very window head (pos 0)
+        wire [AW:0]  pri = (pec[AW] && (page[AW-1:0] != rbase))
+                               ? pec : page;
+        wire [AW:0]  sec = (pri == pee) ? peo : pee;
+        assign fnd_raw[gf] = pri[AW];
+        assign sel_idx[gf] = pri[AW-1:0];
+        assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
+        assign sec_sel[gf] = sec[AW-1:0];
+      end
     end
   endgenerate
 

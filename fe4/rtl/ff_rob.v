@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v4
-// Experiment   : E005
-// Based on     : 4FE-safe-v3 / E004
-// Changes      : vector next-state updates for crit_q/outp_q without ICG enables
+// RTL revision : 4FE-safe-v5
+// Experiment   : E006
+// Based on     : 4FE-safe-v4 / E005
+// Changes      : 8x8 hierarchical oldest-unissued search; no 64-bit rotate
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -69,23 +69,68 @@ module ff_rob #(
   localparam [SW-1:0] OCC_TH = 55;
   localparam [SW-1:0] WIN_TH = 45;
 
-  function [D-1:0] rotrD;               // rotate right by s: out[j]=v[(j+s)%D]
-    input [D-1:0]  v;
-    input [AW-1:0] s;
-    reg [2*D-1:0] t;
+  function [3:0] pe8;
+    input [7:0] v;
+    integer i;
     begin
-      t     = {v, v} >> s;
-      rotrD = t[D-1:0];
+      pe8 = 4'b0;
+      for (i = 7; i >= 0; i = i - 1)
+        if (v[i]) pe8 = {1'b1, i[2:0]};
     end
   endfunction
 
-  function [AW:0] peD;                  // priority encode from bit0:
-    input [D-1:0] v;                    // {found, position[AW-1:0]}
-    integer i;
+  function [7:0] rotr8;
+    input [7:0] v;
+    input [2:0] s;
+    reg [15:0] t;
     begin
-      peD = {(AW+1){1'b0}};
-      for (i = D-1; i >= 0; i = i - 1)
-        if (v[i]) peD = {1'b1, i[AW-1:0]};
+      t = {v, v} >> s;
+      rotr8 = t[7:0];
+    end
+  endfunction
+
+  // Oldest set entry relative to base, returned as {valid, physical index}.
+  // The two-level 8x8 search preserves exact wraparound order without a
+  // 64-bit barrel rotate followed by a flat priority encoder.
+  function [AW:0] peH;
+    input [D-1:0]  v;
+    input [AW-1:0] base;
+    integer b;
+    reg [31:0] bank_pe_f;
+    reg [7:0]  bank_v;
+    reg [7:0]  base_bits, post_mask;
+    reg [7:0]  bank_rot;
+    reg [3:0]  post_pe, pre_pe, bank_pe, local_pe;
+    reg [2:0]  base_bank, next_bank, other_bank;
+    begin
+      bank_pe_f = 32'b0;
+      bank_v    = 8'b0;
+      for (b = 0; b < 8; b = b + 1) begin
+        bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
+        bank_v[b] = bank_pe_f[b*4+3];
+      end
+
+      base_bank = base[5:3];
+      base_bits = v[base_bank*8 +: 8];
+      post_mask = 8'hff << base[2:0];
+      post_pe   = pe8(base_bits & post_mask);
+      pre_pe    = pe8(base_bits & ~post_mask);
+
+      bank_v[base_bank] = 1'b0;
+      next_bank  = base_bank + 3'd1;
+      bank_rot   = rotr8(bank_v, next_bank);
+      bank_pe    = pe8(bank_rot);
+      other_bank = bank_pe[2:0] + next_bank;
+      local_pe   = bank_pe_f[other_bank*4 +: 4];
+
+      if (post_pe[3])
+        peH = {1'b1, base_bank, post_pe[2:0]};
+      else if (bank_pe[3])
+        peH = {1'b1, other_bank, local_pe[2:0]};
+      else if (pre_pe[3])
+        peH = {1'b1, base_bank, pre_pe[2:0]};
+      else
+        peH = {(AW+1){1'b0}};
     end
   endfunction
 
@@ -167,18 +212,18 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   reg [SW-1:0] adv;
   reg [SW-1:0] adv_raw, dist_f;
-  reg [D-1:0]  niss_rot;
-  reg [AW:0]   ffz;
+  reg [AW:0]   first_niss;
+  reg [AW-1:0] first_dist;
   wire [D-1:0] iss_eff = iss_q | picked;
   always @* begin
     // picked is now the registered issue/commit bitmap.  Include it in the
     // look-ahead so delaying the ROB state write until issue does not add an
     // extra cycle to oldest-unissued pointer advancement.
-    niss_rot = rotrD(~iss_eff, old_u_q[AW-1:0]);
-    ffz      = peD(niss_rot);
-    adv_raw  = ffz[AW] ? {1'b0, ffz[AW-1:0]} : 7'd64;
-    dist_f   = alloc_seq_q - old_u_q;
-    adv      = (adv_raw > dist_f) ? dist_f : adv_raw;
+    first_niss = peH(~iss_eff, old_u_q[AW-1:0]);
+    first_dist = first_niss[AW-1:0] - old_u_q[AW-1:0];
+    adv_raw    = first_niss[AW] ? {1'b0, first_dist} : 7'd64;
+    dist_f     = alloc_seq_q - old_u_q;
+    adv        = (adv_raw > dist_f) ? dist_f : adv_raw;
   end
 
   // -------------------------------------------------------------------------
