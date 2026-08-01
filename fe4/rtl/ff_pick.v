@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v5
-// Experiment   : E006
-// Based on     : 4FE-safe-v4 / E005
-// Changes      : single-primary selector in safe mode; dual path preserved
+// RTL revision : 4FE-safe-v7
+// Experiment   : E008
+// Based on     : 4FE-safe-v6 / E007
+// Changes      : safe selector carries hierarchical one-hot into picked_q
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -47,6 +47,19 @@ module ff_pick #(
       pe8 = 4'b0;
       for (i = 7; i >= 0; i = i - 1)
         if (v[i]) pe8 = {1'b1, i[2:0]};
+    end
+  endfunction
+
+  // Local priority result with its one-hot form preserved.  Packing is
+  // {onehot[7:0], valid, index[2:0]} so the safe picker does not have to
+  // decode a full 6-bit physical index again when building picked_n.
+  function [11:0] pe8h;
+    input [7:0] v;
+    integer i;
+    begin
+      pe8h = 12'b0;
+      for (i = 7; i >= 0; i = i - 1)
+        if (v[i]) pe8h = {(8'b1 << i), 1'b1, i[2:0]};
     end
   endfunction
 
@@ -108,6 +121,70 @@ module ff_pick #(
     end
   endfunction
 
+  // Safe-profile hierarchical selector returning both representations:
+  // {physical_onehot[D-1:0], valid, physical_index[AW-1:0]}.
+  // Bank and local one-hot values are retained from the two 8-entry priority
+  // levels, avoiding the old selected-index -> 6-to-64 decode on feedback.
+  function [D+AW:0] peHoh;
+    input [D-1:0]  v;
+    input [AW-1:0] base;
+    integer b;
+    reg [95:0] bank_h_f;
+    reg [7:0]  bank_v;
+    reg [7:0]  base_bits, post_mask;
+    reg [7:0]  bank_rot;
+    reg [11:0] post_h, pre_h, bank_h, local_h;
+    reg [2:0]  base_bank, next_bank, other_bank;
+    reg [D-1:0]  result_oh;
+    reg [AW-1:0] result_idx;
+    reg          result_v;
+    begin
+      bank_h_f = 96'b0;
+      bank_v   = 8'b0;
+      for (b = 0; b < 8; b = b + 1) begin
+        bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
+        bank_v[b] = bank_h_f[b*12+3];
+      end
+
+      base_bank = base[5:3];
+      base_bits = v[base_bank*8 +: 8];
+      post_mask = 8'hff << base[2:0];
+      post_h    = pe8h(base_bits & post_mask);
+      pre_h     = pe8h(base_bits & ~post_mask);
+
+      bank_v[base_bank] = 1'b0;
+      next_bank  = base_bank + 3'd1;
+      bank_rot   = rotr8(bank_v, next_bank);
+      bank_h     = pe8h(bank_rot);
+      other_bank = bank_h[2:0] + next_bank;
+      local_h    = bank_h_f[other_bank*12 +: 12];
+
+      result_oh  = {D{1'b0}};
+      result_idx = {AW{1'b0}};
+      result_v   = 1'b0;
+      if (post_h[3]) begin
+        result_v   = 1'b1;
+        result_idx = {base_bank, post_h[2:0]};
+        for (b = 0; b < 8; b = b + 1)
+          if (base_bank == b[2:0])
+            result_oh[b*8 +: 8] = post_h[11:4];
+      end else if (bank_h[3]) begin
+        result_v   = 1'b1;
+        result_idx = {other_bank, local_h[2:0]};
+        for (b = 0; b < 8; b = b + 1)
+          if (other_bank == b[2:0])
+            result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8];
+      end else if (pre_h[3]) begin
+        result_v   = 1'b1;
+        result_idx = {base_bank, pre_h[2:0]};
+        for (b = 0; b < 8; b = b + 1)
+          if (base_bank == b[2:0])
+            result_oh[b*8 +: 8] = pre_h[11:4];
+      end
+      peHoh = {result_oh, result_v, result_idx};
+    end
+  endfunction
+
   // steal-conflict on receiver for donor class cc: output slot must be free
   // in the booked pipeline and not being booked by the packet currently
   // issuing on that FE  (svr[k-1] carries sched_v[k]; need sched_v[cc+3])
@@ -164,6 +241,7 @@ module ff_pick #(
   // -------------------------------------------------------------------------
   wire [NFE-1:0] fnd_raw;
   wire [AW-1:0]  sel_idx [0:NFE-1];
+  wire [D-1:0]   sel_oh  [0:NFE-1];
   wire [NFE-1:0] sec_fnd;
   wire [AW-1:0]  sec_sel [0:NFE-1];
 
@@ -177,15 +255,18 @@ module ff_pick #(
           cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
       end
       if (DUAL_STEAL == 0) begin : g_safe
-        // The safe profile never consumes a secondary candidate.  Selecting
-        // one oldest primary directly removes the even/odd dual PEs, their age
-        // compare, and the unused secondary feedback from the critical cone.
-        wire [AW:0] page = peH(cand, rbase);
-        wire [AW:0] pec  = peH(cand & crit_q, rbase);
-        wire [AW:0] pri  = (pec[AW] && (page[AW-1:0] != rbase))
-                             ? pec : page;
-        assign fnd_raw[gf] = pri[AW];
-        assign sel_idx[gf] = pri[AW-1:0];
+        // The safe profile consumes only the primary candidate.  Preserve the
+        // hierarchical one-hot result beside its binary index so picked_n can
+        // use it directly instead of decoding pk_idx_n back to 64 bits.
+        wire [D+AW:0] page_h = peHoh(cand, rbase);
+        wire [D+AW:0] pec_h  = peHoh(cand & crit_q, rbase);
+        wire [AW:0] page = page_h[AW:0];
+        wire [AW:0] pec  = pec_h[AW:0];
+        wire use_crit = pec[AW] && (page[AW-1:0] != rbase);
+        assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
+        assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
+        assign sel_oh[gf]  = use_crit ? pec_h[D+AW:AW+1]
+                                      : page_h[D+AW:AW+1];
         assign sec_fnd[gf] = 1'b0;
         assign sec_sel[gf] = {AW{1'b0}};
       end else begin : g_dual
@@ -206,6 +287,7 @@ module ff_pick #(
         wire [AW:0]  sec = (pri == pee) ? peo : pee;
         assign fnd_raw[gf] = pri[AW];
         assign sel_idx[gf] = pri[AW-1:0];
+        assign sel_oh[gf]  = {D{1'b0}};
         assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
         assign sec_sel[gf] = sec[AW-1:0];
       end
@@ -326,12 +408,23 @@ module ff_pick #(
   end
 
   reg [D-1:0] picked_n;
-  integer pf;
-  always @* begin
-    picked_n = {D{1'b0}};
-    for (pf = 0; pf < NFE; pf = pf + 1)
-      if (pk_v_n[pf]) picked_n[pk_idx_n[pf]] = 1'b1;
-  end
+  generate
+    if (DUAL_STEAL == 0) begin : g_safe_picked
+      integer pf;
+      always @* begin
+        picked_n = {D{1'b0}};
+        for (pf = 0; pf < NFE; pf = pf + 1)
+          if (pk_v_n[pf]) picked_n = picked_n | sel_oh[pf];
+      end
+    end else begin : g_dual_picked
+      integer pf;
+      always @* begin
+        picked_n = {D{1'b0}};
+        for (pf = 0; pf < NFE; pf = pf + 1)
+          if (pk_v_n[pf]) picked_n[pk_idx_n[pf]] = 1'b1;
+      end
+    end
+  endgenerate
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
