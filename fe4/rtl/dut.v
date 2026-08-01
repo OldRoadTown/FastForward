@@ -1,9 +1,17 @@
 // =============================================================================
-// fast_forward top (4-FE work-stealing variant, modular) -- dut -- Verilog-2001
+// fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
+//
+// RTL revision : 4FE-safe-v6
+// Experiment   : E007
+// Based on     : 4FE-safe-v5 / E006
+// Changes      : integrate fe x4 inside dut; specialize safe dependency data
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
-// Top level only flattens/unflattens ports and instantiates the stages:
+// Fixed integration contract: dut exposes only PKTIN, PKTOUT, and BKPR.  FEIN
+// and FEOUT stay internal; the top instantiates four forwarding engines.
+//
+// Top level flattens/unflattens ports and instantiates the stages:
 //   ff_ingress  S0/S1: PKTIN registers, compaction, dependency resolve, alloc
 //               (+ critical-target marking info)
 //   ff_rob      ROB storage/state (+critical flags), wake-up, counters,
@@ -12,6 +20,7 @@
 //               priority + work stealing (<=2/cycle) + rob_src record
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
 //   ff_sched    per-FE 4-slot result scheduler (exact output-slot booking)
+//   fe x4        integrated forwarding engines
 //   ff_egress   in-order rotating-lane output, PKTOUT registers
 //
 // Architecture summary (details in docs/design_spec.md):
@@ -54,39 +63,7 @@ module dut #(
   output wire [127:0] lane3_pkt_out_data,
 
   // ------------------------- BKPR ---------------------------------
-  output wire         pkt_in_bkpr,
-
-  // ------------------------- FEIN (4 engines) ---------------------
-  output wire         fwd0_pkt_data_vld,
-  output wire [127:0] fwd0_pkt_data,
-  output wire [1:0]   fwd0_pkt_lat,
-  output wire         fwd0_pkt_dp_vld,
-  output wire [127:0] fwd0_pkt_dp_data,
-  output wire         fwd1_pkt_data_vld,
-  output wire [127:0] fwd1_pkt_data,
-  output wire [1:0]   fwd1_pkt_lat,
-  output wire         fwd1_pkt_dp_vld,
-  output wire [127:0] fwd1_pkt_dp_data,
-  output wire         fwd2_pkt_data_vld,
-  output wire [127:0] fwd2_pkt_data,
-  output wire [1:0]   fwd2_pkt_lat,
-  output wire         fwd2_pkt_dp_vld,
-  output wire [127:0] fwd2_pkt_dp_data,
-  output wire         fwd3_pkt_data_vld,
-  output wire [127:0] fwd3_pkt_data,
-  output wire [1:0]   fwd3_pkt_lat,
-  output wire         fwd3_pkt_dp_vld,
-  output wire [127:0] fwd3_pkt_dp_data,
-
-  // ------------------------- FEOUT (4 engines) --------------------
-  input  wire         fwded0_pkt_data_vld,
-  input  wire [127:0] fwded0_pkt_data,
-  input  wire         fwded1_pkt_data_vld,
-  input  wire [127:0] fwded1_pkt_data,
-  input  wire         fwded2_pkt_data_vld,
-  input  wire [127:0] fwded2_pkt_data,
-  input  wire         fwded3_pkt_data_vld,
-  input  wire [127:0] fwded3_pkt_data
+  output wire         pkt_in_bkpr
 );
 
   localparam D   = 64;
@@ -103,6 +80,15 @@ module dut #(
                             lane1_pkt_in_data, lane0_pkt_in_data};
   wire [19:0]  in_ctrl_f = {lane3_pkt_in_ctrl, lane2_pkt_in_ctrl,
                             lane1_pkt_in_ctrl, lane0_pkt_in_ctrl};
+
+  wire         fwded0_pkt_data_vld;
+  wire [127:0] fwded0_pkt_data;
+  wire         fwded1_pkt_data_vld;
+  wire [127:0] fwded1_pkt_data;
+  wire         fwded2_pkt_data_vld;
+  wire [127:0] fwded2_pkt_data;
+  wire         fwded3_pkt_data_vld;
+  wire [127:0] fwded3_pkt_data;
 
   wire [NFE-1:0]     fe_ov  = {fwded3_pkt_data_vld, fwded2_pkt_data_vld,
                                fwded1_pkt_data_vld, fwded0_pkt_data_vld};
@@ -194,7 +180,8 @@ module dut #(
     .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f), .rob_src_f(rob_src_f)
   );
 
-  ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN)) u_issue (
+  ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
+             .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
     .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .rob_tgt_f(rob_tgt_f),
@@ -211,6 +198,53 @@ module dut #(
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
     .sched_v_f(sched_v_f)
+  );
+
+  // -------------------------------------------------------------------------
+  // integrated forwarding engines
+  // -------------------------------------------------------------------------
+  fe u_fe0 (
+    .clk(clk), .rst_n(rst_n),
+    .fwd_pkt_data_vld(fwd_v[0]),
+    .fwd_pkt_data(fwd_d_f[0*128 +: 128]),
+    .fwd_pkt_lat(fwd_l_f[0*2 +: 2]),
+    .fwd_pkt_dp_vld(fwd_dpv[0]),
+    .fwd_pkt_dp_data(fwd_dpd_f[0*128 +: 128]),
+    .fwded_pkt_data_vld(fwded0_pkt_data_vld),
+    .fwded_pkt_data(fwded0_pkt_data)
+  );
+
+  fe u_fe1 (
+    .clk(clk), .rst_n(rst_n),
+    .fwd_pkt_data_vld(fwd_v[1]),
+    .fwd_pkt_data(fwd_d_f[1*128 +: 128]),
+    .fwd_pkt_lat(fwd_l_f[1*2 +: 2]),
+    .fwd_pkt_dp_vld(fwd_dpv[1]),
+    .fwd_pkt_dp_data(fwd_dpd_f[1*128 +: 128]),
+    .fwded_pkt_data_vld(fwded1_pkt_data_vld),
+    .fwded_pkt_data(fwded1_pkt_data)
+  );
+
+  fe u_fe2 (
+    .clk(clk), .rst_n(rst_n),
+    .fwd_pkt_data_vld(fwd_v[2]),
+    .fwd_pkt_data(fwd_d_f[2*128 +: 128]),
+    .fwd_pkt_lat(fwd_l_f[2*2 +: 2]),
+    .fwd_pkt_dp_vld(fwd_dpv[2]),
+    .fwd_pkt_dp_data(fwd_dpd_f[2*128 +: 128]),
+    .fwded_pkt_data_vld(fwded2_pkt_data_vld),
+    .fwded_pkt_data(fwded2_pkt_data)
+  );
+
+  fe u_fe3 (
+    .clk(clk), .rst_n(rst_n),
+    .fwd_pkt_data_vld(fwd_v[3]),
+    .fwd_pkt_data(fwd_d_f[3*128 +: 128]),
+    .fwd_pkt_lat(fwd_l_f[3*2 +: 2]),
+    .fwd_pkt_dp_vld(fwd_dpv[3]),
+    .fwd_pkt_dp_data(fwd_dpd_f[3*128 +: 128]),
+    .fwded_pkt_data_vld(fwded3_pkt_data_vld),
+    .fwded_pkt_data(fwded3_pkt_data)
   );
 
   ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_egress (
@@ -233,27 +267,6 @@ module dut #(
   assign lane1_pkt_out_data = lane_d_f[1*128 +: 128];
   assign lane2_pkt_out_data = lane_d_f[2*128 +: 128];
   assign lane3_pkt_out_data = lane_d_f[3*128 +: 128];
-
-  assign fwd0_pkt_data_vld = fwd_v[0];
-  assign fwd1_pkt_data_vld = fwd_v[1];
-  assign fwd2_pkt_data_vld = fwd_v[2];
-  assign fwd3_pkt_data_vld = fwd_v[3];
-  assign fwd0_pkt_data     = fwd_d_f[0*128 +: 128];
-  assign fwd1_pkt_data     = fwd_d_f[1*128 +: 128];
-  assign fwd2_pkt_data     = fwd_d_f[2*128 +: 128];
-  assign fwd3_pkt_data     = fwd_d_f[3*128 +: 128];
-  assign fwd0_pkt_lat      = fwd_l_f[0*2 +: 2];
-  assign fwd1_pkt_lat      = fwd_l_f[1*2 +: 2];
-  assign fwd2_pkt_lat      = fwd_l_f[2*2 +: 2];
-  assign fwd3_pkt_lat      = fwd_l_f[3*2 +: 2];
-  assign fwd0_pkt_dp_vld   = fwd_dpv[0];
-  assign fwd1_pkt_dp_vld   = fwd_dpv[1];
-  assign fwd2_pkt_dp_vld   = fwd_dpv[2];
-  assign fwd3_pkt_dp_vld   = fwd_dpv[3];
-  assign fwd0_pkt_dp_data  = fwd_dpd_f[0*128 +: 128];
-  assign fwd1_pkt_dp_data  = fwd_dpd_f[1*128 +: 128];
-  assign fwd2_pkt_dp_data  = fwd_dpd_f[2*128 +: 128];
-  assign fwd3_pkt_dp_data  = fwd_dpd_f[3*128 +: 128];
 
 `ifndef SYNTHESIS
   // internal consistency: FE result valids must match the booked schedule

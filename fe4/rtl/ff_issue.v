@@ -1,10 +1,17 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
+// RTL revision : 4FE-safe-v6
+// Experiment   : E007
+// Based on     : 4FE-safe-v5 / E006
+// Changes      : remove live dependency bypass when WAKE_BYPASS is disabled
+//
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
-// from the FEOUT bus when the
-// target's result arrives in this very cycle (pre-wake support).
+// from the FEOUT bus when the target's result arrives in this very cycle
+// (WAKE_BYPASS pre-wake support).  With WAKE_BYPASS=0, issue occurs only after
+// the target result has been stored in the ROB, so that live bypass cone is
+// compiled out without adding a pipeline cycle.
 // REG_FEIN=1 inserts an output register stage (timing fallback); the tag
 // pipe (issue_v/issue_idx) is always fed FEIN-cycle aligned.
 // =============================================================================
@@ -12,7 +19,8 @@ module ff_issue #(
   parameter D        = 64,
   parameter AW       = 6,
   parameter NFE      = 4,
-  parameter REG_FEIN = 0
+  parameter REG_FEIN = 0,
+  parameter WAKE_BYPASS = 0
 )(
   input  wire                    clk,
   input  wire                    rst_n,
@@ -74,9 +82,18 @@ module ff_issue #(
       assign fein_v[gf]   = pk_v_q[gf];
       assign fein_d[gf]   = rob_data[ridx];
       assign fein_dpv[gf] = rob_isdep[ridx];
-      // dp bypass: target result may be on the FEOUT bus this very cycle
-      assign fein_dpd[gf] = res_now[tgt] ? fe_od[rob_src[tgt]]
-                                         : rob_data[tgt];
+      if (WAKE_BYPASS == 0) begin : g_stored_dp
+        // Without same-cycle wake-to-pick bypass, the target result is written
+        // to rob_data one edge before this packet reaches issue.  Reading the
+        // retained copy is therefore exact and removes res_now/rob_src/FEOUT
+        // selection from the safe-profile FE input timing path.
+        assign fein_dpd[gf] = rob_data[tgt];
+      end else begin : g_live_dp
+        // Full-throughput profile: a pre-woken packet may enter the FE in the
+        // same cycle as its target result and must consume the live FEOUT bus.
+        assign fein_dpd[gf] = res_now[tgt] ? fe_od[rob_src[tgt]]
+                                           : rob_data[tgt];
+      end
     end
   endgenerate
 

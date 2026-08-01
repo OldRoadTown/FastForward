@@ -19,6 +19,10 @@ Makefile            make quick / mid / heavy
 核心机制：延时类主绑定 + 每 FE 4 槽输出记账 + 跨类偷取 + 依赖目标
 critical 插队 + 可选的预唤醒同拍送入。
 
+`dut` 的集成边界固定为只暴露 PKTIN、PKTOUT 和 BKPR；四个 `fe`
+实例以及 FEIN/FEOUT 连线必须保留在 `dut` 内部。`verif/fe_model.sv`
+提供相同端口契约的本地行为模型，内网综合时由真实 `fe` 实现替换。
+
 默认是内网 STA 使用的 timing-safe 配置：
 
 ```
