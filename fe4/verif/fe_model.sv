@@ -59,3 +59,32 @@ module fe_model (
   assign fwded_pkt_data     = dq[1];
 
 endmodule
+
+// Production-interface wrapper used only by local verification.  The real
+// integration flow supplies its own `fe` implementation with this same port
+// contract; dut therefore needs no FEIN/FEOUT ports at its external boundary.
+module fe (
+  input  logic         clk,
+  input  logic         rst_n,
+  input  logic         fwd_pkt_data_vld,
+  input  logic [127:0] fwd_pkt_data,
+  input  logic [1:0]   fwd_pkt_lat,
+  input  logic         fwd_pkt_dp_vld,
+  input  logic [127:0] fwd_pkt_dp_data,
+  output logic         fwded_pkt_data_vld,
+  output logic [127:0] fwded_pkt_data
+);
+
+  fe_model u_model (
+    .clk(clk),
+    .rst_n(rst_n),
+    .pkt_data_vld(fwd_pkt_data_vld),
+    .pkt_data(fwd_pkt_data),
+    .pkt_lat(fwd_pkt_lat),
+    .pkt_dp_vld(fwd_pkt_dp_vld),
+    .pkt_dp_data(fwd_pkt_dp_data),
+    .fwded_pkt_data_vld(fwded_pkt_data_vld),
+    .fwded_pkt_data(fwded_pkt_data)
+  );
+
+endmodule
