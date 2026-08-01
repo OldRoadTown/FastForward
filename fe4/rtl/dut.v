@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v6
-// Experiment   : E007
-// Based on     : 4FE-safe-v5 / E006
-// Changes      : integrate fe x4 inside dut; specialize safe dependency data
+// RTL revision : 4FE-safe-v7
+// Experiment   : E008
+// Based on     : 4FE-safe-v6 / E007
+// Changes      : integrated fe x4; direct hierarchical one-hot pick feedback
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
