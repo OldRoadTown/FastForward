@@ -1,6 +1,11 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, modular) -- dut -- Verilog-2001
 //
+// RTL revision : 4FE-safe-v6
+// Experiment   : E007
+// Based on     : 4FE-safe-v5 / E006
+// Changes      : specialize ff_issue dependency data for WAKE_BYPASS=0
+//
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
 // Top level only flattens/unflattens ports and instantiates the stages:
@@ -194,7 +199,8 @@ module dut #(
     .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f), .rob_src_f(rob_src_f)
   );
 
-  ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN)) u_issue (
+  ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
+             .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
     .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .rob_tgt_f(rob_tgt_f),
