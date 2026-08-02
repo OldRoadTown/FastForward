@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v6
-// Experiment   : E007
-// Based on     : 4FE-safe-v5 / E006
-// Changes      : remove live dependency bypass when WAKE_BYPASS is disabled
+// RTL revision : 4FE-safe-v9
+// Experiment   : E010
+// Based on     : 4FE-safe-v8a / E009-N1
+// Changes      : consume I0-registered dependency target index
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -27,11 +27,11 @@ module ff_issue #(
   // picks (I0 registered)
   input  wire [NFE-1:0]          pk_v_q,
   input  wire [NFE*AW-1:0]       pk_idx_f,
+  input  wire [NFE*AW-1:0]       pk_tgt_f,
   input  wire [NFE*2-1:0]        pk_lat_f,
   // ROB read view
   input  wire [D*128-1:0]        rob_data_f,
   input  wire [D*2-1:0]          rob_src_f,     // FE each entry was issued to
-  input  wire [D*AW-1:0]         rob_tgt_f,
   input  wire [D-1:0]            rob_isdep,
   // same-cycle result bypass
   input  wire [D-1:0]            res_now,
@@ -51,20 +51,20 @@ module ff_issue #(
   // unpack
   wire [127:0]  rob_data [0:D-1];
   wire [1:0]    rob_src  [0:D-1];
-  wire [AW-1:0] rob_tgt  [0:D-1];
   wire [127:0]  fe_od    [0:NFE-1];
   wire [AW-1:0] pk_idx   [0:NFE-1];
+  wire [AW-1:0] pk_tgt   [0:NFE-1];
   wire [1:0]    pk_lat   [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
       assign rob_data[gi] = rob_data_f[gi*128 +: 128];
       assign rob_src[gi]  = rob_src_f[gi*2 +: 2];
-      assign rob_tgt[gi]  = rob_tgt_f[gi*AW +: AW];
     end
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uo
       assign fe_od[gi]  = fe_od_f[gi*128 +: 128];
       assign pk_idx[gi] = pk_idx_f[gi*AW +: AW];
+      assign pk_tgt[gi] = pk_tgt_f[gi*AW +: AW];
       assign pk_lat[gi] = pk_lat_f[gi*2 +: 2];
     end
   endgenerate
@@ -78,7 +78,10 @@ module ff_issue #(
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_iss
       wire [AW-1:0] ridx = pk_idx[gf];
-      wire [AW-1:0] tgt  = rob_tgt[ridx];
+      // pk_tgt was read and registered beside pk_idx in I0.  The I1 FE-input
+      // path therefore contains only the target-data read, not two cascaded
+      // 64-entry muxes (packet->target followed by target->data).
+      wire [AW-1:0] tgt  = pk_tgt[gf];
       assign fein_v[gf]   = pk_v_q[gf];
       assign fein_d[gf]   = rob_data[ridx];
       assign fein_dpv[gf] = rob_isdep[ridx];
