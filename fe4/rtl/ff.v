@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v10
-// Experiment   : E011-N2
-// Based on     : 4FE-safe-v9 / E010
-// Changes      : split ingress data/control and resolve readiness per lane
+// RTL revision : 4FE-safe-v11
+// Experiment   : E012-N1
+// Based on     : 4FE-safe-v10 / E011-N2
+// Changes      : retime hierarchical ROB read selects across I0/I1
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
@@ -119,6 +119,8 @@ module ff #(
   wire [NFE*AW-1:0]   pk_idx_f;
   wire [NFE*AW-1:0]   pk_tgt_f;
   wire [NFE*2-1:0]    pk_lat_f;
+  wire [NFE*8-1:0]    pk_bank_oh_f;
+  wire [NFE*8-1:0]    pk_local_oh_f;
   wire [D*2-1:0]      rob_src_f;
 
   wire [NFE-1:0]      issue_v;
@@ -180,14 +182,16 @@ module ff #(
     .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
-    .pk_lat_f(pk_lat_f), .rob_src_f(rob_src_f)
+    .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
+    .pk_local_oh_f(pk_local_oh_f), .rob_src_f(rob_src_f)
   );
 
   ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
              .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
     .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
-    .pk_lat_f(pk_lat_f),
+    .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
+    .pk_local_oh_f(pk_local_oh_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),
     .rob_isdep(rob_isdep),
     .res_now(res_now), .fe_od_f(fe_od_f),

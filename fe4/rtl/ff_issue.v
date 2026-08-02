@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v9
-// Experiment   : E010
-// Based on     : 4FE-safe-v8a / E009-N1
-// Changes      : consume I0-registered dependency target index
+// RTL revision : 4FE-safe-v11
+// Experiment   : E012-N1
+// Based on     : 4FE-safe-v10 / E011-N2
+// Changes      : consume I0-registered hierarchical ROB read selects
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -29,6 +29,8 @@ module ff_issue #(
   input  wire [NFE*AW-1:0]       pk_idx_f,
   input  wire [NFE*AW-1:0]       pk_tgt_f,
   input  wire [NFE*2-1:0]        pk_lat_f,
+  input  wire [NFE*8-1:0]        pk_bank_oh_f,
+  input  wire [NFE*8-1:0]        pk_local_oh_f,
   // ROB read view
   input  wire [D*128-1:0]        rob_data_f,
   input  wire [D*2-1:0]          rob_src_f,     // FE each entry was issued to
@@ -55,6 +57,8 @@ module ff_issue #(
   wire [AW-1:0] pk_idx   [0:NFE-1];
   wire [AW-1:0] pk_tgt   [0:NFE-1];
   wire [1:0]    pk_lat   [0:NFE-1];
+  wire [7:0]    pk_bank_oh [0:NFE-1];
+  wire [7:0]    pk_local_oh [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
@@ -66,6 +70,8 @@ module ff_issue #(
       assign pk_idx[gi] = pk_idx_f[gi*AW +: AW];
       assign pk_tgt[gi] = pk_tgt_f[gi*AW +: AW];
       assign pk_lat[gi] = pk_lat_f[gi*2 +: 2];
+      assign pk_bank_oh[gi] = pk_bank_oh_f[gi*8 +: 8];
+      assign pk_local_oh[gi] = pk_local_oh_f[gi*8 +: 8];
     end
   endgenerate
 
@@ -74,16 +80,37 @@ module ff_issue #(
   wire         fein_dpv [0:NFE-1];
   wire [127:0] fein_dpd [0:NFE-1];
 
-  genvar gf;
+  genvar gf, gb;
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_iss
       wire [AW-1:0] ridx = pk_idx[gf];
+      wire [127:0] bank_data [0:7];
+      for (gb = 0; gb < 8; gb = gb + 1) begin : g_bank_read
+        assign bank_data[gb] =
+          (rob_data[gb*8+0] & {128{pk_local_oh[gf][0]}})
+        | (rob_data[gb*8+1] & {128{pk_local_oh[gf][1]}})
+        | (rob_data[gb*8+2] & {128{pk_local_oh[gf][2]}})
+        | (rob_data[gb*8+3] & {128{pk_local_oh[gf][3]}})
+        | (rob_data[gb*8+4] & {128{pk_local_oh[gf][4]}})
+        | (rob_data[gb*8+5] & {128{pk_local_oh[gf][5]}})
+        | (rob_data[gb*8+6] & {128{pk_local_oh[gf][6]}})
+        | (rob_data[gb*8+7] & {128{pk_local_oh[gf][7]}});
+      end
+      wire [127:0] packet_data =
+          (bank_data[0] & {128{pk_bank_oh[gf][0]}})
+        | (bank_data[1] & {128{pk_bank_oh[gf][1]}})
+        | (bank_data[2] & {128{pk_bank_oh[gf][2]}})
+        | (bank_data[3] & {128{pk_bank_oh[gf][3]}})
+        | (bank_data[4] & {128{pk_bank_oh[gf][4]}})
+        | (bank_data[5] & {128{pk_bank_oh[gf][5]}})
+        | (bank_data[6] & {128{pk_bank_oh[gf][6]}})
+        | (bank_data[7] & {128{pk_bank_oh[gf][7]}});
       // pk_tgt was read and registered beside pk_idx in I0.  The I1 FE-input
       // path therefore contains only the target-data read, not two cascaded
       // 64-entry muxes (packet->target followed by target->data).
       wire [AW-1:0] tgt  = pk_tgt[gf];
       assign fein_v[gf]   = pk_v_q[gf];
-      assign fein_d[gf]   = rob_data[ridx];
+      assign fein_d[gf]   = packet_data;
       assign fein_dpv[gf] = rob_isdep[ridx];
       if (WAKE_BYPASS == 0) begin : g_stored_dp
         // Without same-cycle wake-to-pick bypass, the target result is written
