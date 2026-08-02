@@ -1,6 +1,6 @@
 # fast_forward 4-FE 乱序方案（Verilog-2001 实现）
 
-> 顶层：`dut`（`fe4/rtl/dut.v`，纯 Verilog-2001，可综合）
+> 顶层：`ff`（`fe4/rtl/ff.v`，纯 Verilog-2001，可综合）
 > 验证：`fe4/verif/`（FE 行为模型 + 自校验 TB，Verilator）
 > 参数：`REG_FEIN`（FEIN 加寄存级）、`WAKE_BYPASS`（预测唤醒是否
 > 直通当拍 pick）、`DUAL_STEAL`（是否启用第二偷取匹配器）。
@@ -120,8 +120,8 @@ TB 检查点与 8FE 版一致（FEIN 协议/依赖时序与 dp 数据/FEOUT 精�
 
 ## 6. 对接注意
 
-1. `dut` 顶层只暴露题目规定的 PKTIN、PKTOUT 和 BKPR 端口；FE 数固定为
-   4，`fwd0..3` / `fwded0..3` 连线位于顶层内部，并例化官方 `fe.v` 4 份；
+1. `ff` 顶层只暴露题目规定的 PKTIN、PKTOUT 和 BKPR 端口；FE 数固定为
+   4，`fwd0..3` / `fwded0..3` 连线位于顶层内部，并例化官方 `FE` 4 份；
 2. `fwd*_pkt_lat` 为报文真实 lat 透传（偷取使 FE 收到混合延时流——FE 本身支持所有延时，输出冲突由本设计的槽记账保证，属题目允许的设计者责任范围）；
 3. 若环境对"依赖报文与目标结果同拍进 FE"报协议错误 → `WAKE_BYPASS=0`；FE 输入时序紧 → `REG_FEIN=1`；
-4. 本地 fe_model 的变换函数为占位，DUT 不触碰数据内容，接真实 fe.v 无影响。
+4. 本地 fe_model 的变换函数为占位，ff 不触碰数据内容，接真实 FE 无影响。

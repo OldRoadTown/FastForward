@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v5
-// Experiment   : E006
-// Based on     : 4FE-safe-v4 / E005
-// Changes      : 8x8 hierarchical oldest-unissued search; no 64-bit rotate
+// RTL revision : 4FE-safe-v8
+// Experiment   : E009
+// Based on     : 4FE-safe-v7 / E008
+// Changes      : direct oldest-unissued next pointer; remove advance add chain
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -210,10 +210,11 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   // oldest-un-issued pointer: full-speed catch-up, clamped at alloc frontier
   // -------------------------------------------------------------------------
-  reg [SW-1:0] adv;
-  reg [SW-1:0] adv_raw, dist_f;
   reg [AW:0]   first_niss;
   reg [AW-1:0] first_dist;
+  reg [SW-1:0] dist_f;
+  reg [SW-1:0] first_seq;
+  reg          take_first;
   wire [D-1:0] iss_eff = iss_q | picked;
   always @* begin
     // picked is now the registered issue/commit bitmap.  Include it in the
@@ -221,10 +222,23 @@ module ff_rob #(
     // extra cycle to oldest-unissued pointer advancement.
     first_niss = peH(~iss_eff, old_u_q[AW-1:0]);
     first_dist = first_niss[AW-1:0] - old_u_q[AW-1:0];
-    adv_raw    = first_niss[AW] ? {1'b0, first_dist} : 7'd64;
     dist_f     = alloc_seq_q - old_u_q;
-    adv        = (adv_raw > dist_f) ? dist_f : adv_raw;
+    // Reconstruct the 7-bit sequence number directly from the selected
+    // physical index.  Crossing physical slot 63 toggles the sequence epoch.
+    // The active window is kept below D entries by BKPR, so the reconstruction
+    // is unambiguous and equals old_u_q + {1'b0, first_dist}.
+    first_seq  = {
+      old_u_q[SW-1]
+        ^ (first_niss[AW-1:0] < old_u_q[AW-1:0]),
+      first_niss[AW-1:0]
+    };
+    take_first = first_niss[AW] && ({1'b0, first_dist} <= dist_f);
   end
+  // If the first not-issued physical entry lies beyond the allocation
+  // frontier (or none exists), catch up exactly to alloc_seq_q.  This is
+  // equivalent to min(adv_raw, dist_f) followed by old_u_q + adv, but removes
+  // that mux/compare/add chain from the old_u_q register input.
+  wire [SW-1:0] old_u_n = take_first ? first_seq : alloc_seq_q;
 
   // -------------------------------------------------------------------------
   // BKPR (registered output)
@@ -294,7 +308,7 @@ module ff_rob #(
       end
       alloc_seq_q <= alloc_seq_q + {4'b0, acnt};
       out_seq_q   <= out_seq_q + {4'b0, pop_cnt};
-      old_u_q     <= old_u_q + adv;
+      old_u_q     <= old_u_n;
     end
   end
 

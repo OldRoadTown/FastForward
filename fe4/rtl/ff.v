@@ -1,14 +1,14 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v7
-// Experiment   : E008
-// Based on     : 4FE-safe-v6 / E007
-// Changes      : integrated fe x4; direct hierarchical one-hot pick feedback
+// RTL revision : 4FE-safe-v8a
+// Experiment   : E009-N1
+// Based on     : 4FE-safe-v8 / E009
+// Changes      : rename top dut->ff; instantiate uppercase FE x4
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
-// Fixed integration contract: dut exposes only PKTIN, PKTOUT, and BKPR.  FEIN
+// Fixed integration contract: ff exposes only PKTIN, PKTOUT, and BKPR.  FEIN
 // and FEOUT stay internal; the top instantiates four forwarding engines.
 //
 // Top level flattens/unflattens ports and instantiates the stages:
@@ -20,7 +20,7 @@
 //               priority + work stealing (<=2/cycle) + rob_src record
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
 //   ff_sched    per-FE 4-slot result scheduler (exact output-slot booking)
-//   fe x4        integrated forwarding engines
+//   FE x4        integrated forwarding engines
 //   ff_egress   in-order rotating-lane output, PKTOUT registers
 //
 // Architecture summary (details in docs/design_spec.md):
@@ -30,7 +30,7 @@
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
 // =============================================================================
-module dut #(
+module ff #(
   parameter REG_FEIN    = 0,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0
@@ -203,7 +203,7 @@ module dut #(
   // -------------------------------------------------------------------------
   // integrated forwarding engines
   // -------------------------------------------------------------------------
-  fe u_fe0 (
+  FE u_fe0 (
     .clk(clk), .rst_n(rst_n),
     .fwd_pkt_data_vld(fwd_v[0]),
     .fwd_pkt_data(fwd_d_f[0*128 +: 128]),
@@ -214,7 +214,7 @@ module dut #(
     .fwded_pkt_data(fwded0_pkt_data)
   );
 
-  fe u_fe1 (
+  FE u_fe1 (
     .clk(clk), .rst_n(rst_n),
     .fwd_pkt_data_vld(fwd_v[1]),
     .fwd_pkt_data(fwd_d_f[1*128 +: 128]),
@@ -225,7 +225,7 @@ module dut #(
     .fwded_pkt_data(fwded1_pkt_data)
   );
 
-  fe u_fe2 (
+  FE u_fe2 (
     .clk(clk), .rst_n(rst_n),
     .fwd_pkt_data_vld(fwd_v[2]),
     .fwd_pkt_data(fwd_d_f[2*128 +: 128]),
@@ -236,7 +236,7 @@ module dut #(
     .fwded_pkt_data(fwded2_pkt_data)
   );
 
-  fe u_fe3 (
+  FE u_fe3 (
     .clk(clk), .rst_n(rst_n),
     .fwd_pkt_data_vld(fwd_v[3]),
     .fwd_pkt_data(fwd_d_f[3*128 +: 128]),
@@ -275,7 +275,7 @@ module dut #(
     if (rst_n) begin
       for (f = 0; f < NFE; f = f + 1) begin
         if (exit_v[f] !== fe_ov[f])
-          $display("[dut] ERROR: FE%0d result valid mismatch @%0t", f, $time);
+          $display("[ff] ERROR: FE%0d result valid mismatch @%0t", f, $time);
       end
     end
   end
