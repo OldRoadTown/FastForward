@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : retime hierarchical ROB read selects across I0/I1
+// RTL revision : 4FE-safe-v12
+// Experiment   : E013-N1
+// Based on     : 4FE-safe-v11 / E012-N1
+// Changes      : narrow picker result payload before picked one-hot rebuild
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
