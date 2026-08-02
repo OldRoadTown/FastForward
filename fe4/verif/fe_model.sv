@@ -61,9 +61,9 @@ module fe_model (
 endmodule
 
 // Production-interface wrapper used only by local verification.  The real
-// integration flow supplies its own `fe` implementation with this same port
-// contract; dut therefore needs no FEIN/FEOUT ports at its external boundary.
-module fe (
+// integration flow supplies its own uppercase `FE` implementation with this
+// same port contract; ff therefore needs no FEIN/FEOUT ports at its boundary.
+module FE (
   input  logic         clk,
   input  logic         rst_n,
   input  logic         fwd_pkt_data_vld,

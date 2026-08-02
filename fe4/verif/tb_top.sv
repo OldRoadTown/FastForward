@@ -1,5 +1,5 @@
 // =============================================================================
-// tb_top - self-checking testbench for the fast_forward dut
+// tb_top - self-checking testbench for the fast_forward ff top
 //
 // Checks:
 //  1. FEIN protocol : each packet issued exactly once, correct data/lat;
@@ -64,8 +64,8 @@ module tb_top;
   logic         fe_v [4];
   logic [127:0] fe_d [4];
 
-  dut #(.REG_FEIN(`REG_FEIN_V), .WAKE_BYPASS(`WAKE_BYPASS_V),
-        .DUAL_STEAL(`DUAL_STEAL_V)) u_dut (
+  ff #(.REG_FEIN(`REG_FEIN_V), .WAKE_BYPASS(`WAKE_BYPASS_V),
+       .DUAL_STEAL(`DUAL_STEAL_V)) u_ff (
     .clk(clk), .rst_n(rst_n),
     .lane0_pkt_in_vld(li_v[0]), .lane0_pkt_in_data(li_d[0]), .lane0_pkt_in_ctrl(li_c[0]),
     .lane1_pkt_in_vld(li_v[1]), .lane1_pkt_in_data(li_d[1]), .lane1_pkt_in_ctrl(li_c[1]),
@@ -82,21 +82,21 @@ module tb_top;
   // monitors by tapping the internal FEIN/FEOUT nets hierarchically in TB only.
   generate
     for (genvar f = 0; f < 4; f++) begin : g_fe_tap
-      assign fw_v[f]   = u_dut.fwd_v[f];
-      assign fw_d[f]   = u_dut.fwd_d_f[f*128 +: 128];
-      assign fw_l[f]   = u_dut.fwd_l_f[f*2 +: 2];
-      assign fw_dpv[f] = u_dut.fwd_dpv[f];
-      assign fw_dpd[f] = u_dut.fwd_dpd_f[f*128 +: 128];
+      assign fw_v[f]   = u_ff.fwd_v[f];
+      assign fw_d[f]   = u_ff.fwd_d_f[f*128 +: 128];
+      assign fw_l[f]   = u_ff.fwd_l_f[f*2 +: 2];
+      assign fw_dpv[f] = u_ff.fwd_dpv[f];
+      assign fw_dpd[f] = u_ff.fwd_dpd_f[f*128 +: 128];
     end
   endgenerate
-  assign fe_v[0] = u_dut.fwded0_pkt_data_vld;
-  assign fe_v[1] = u_dut.fwded1_pkt_data_vld;
-  assign fe_v[2] = u_dut.fwded2_pkt_data_vld;
-  assign fe_v[3] = u_dut.fwded3_pkt_data_vld;
-  assign fe_d[0] = u_dut.fwded0_pkt_data;
-  assign fe_d[1] = u_dut.fwded1_pkt_data;
-  assign fe_d[2] = u_dut.fwded2_pkt_data;
-  assign fe_d[3] = u_dut.fwded3_pkt_data;
+  assign fe_v[0] = u_ff.fwded0_pkt_data_vld;
+  assign fe_v[1] = u_ff.fwded1_pkt_data_vld;
+  assign fe_v[2] = u_ff.fwded2_pkt_data_vld;
+  assign fe_v[3] = u_ff.fwded3_pkt_data_vld;
+  assign fe_d[0] = u_ff.fwded0_pkt_data;
+  assign fe_d[1] = u_ff.fwded1_pkt_data;
+  assign fe_d[2] = u_ff.fwded2_pkt_data;
+  assign fe_d[3] = u_ff.fwded3_pkt_data;
 
   // --------------------------------------------------------------------------
   // golden model (must match fe_model.fe_xform)
@@ -289,8 +289,8 @@ module tb_top;
       if (first_in >= 0 && rd_seq < NPKT) begin
         stat_cycles++;
         if (bkpr) stat_bkpr++;
-        if (u_dut.u_rob.occ > u_dut.u_rob.OCC_TH) stat_occ++;
-        if (u_dut.u_rob.win > u_dut.u_rob.WIN_TH) stat_win++;
+        if (u_ff.u_rob.occ > u_ff.u_rob.OCC_TH) stat_occ++;
+        if (u_ff.u_rob.win > u_ff.u_rob.WIN_TH) stat_win++;
       end
 
       // ---------------- end / watchdog ----------------
