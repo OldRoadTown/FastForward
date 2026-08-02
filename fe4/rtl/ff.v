@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v8a
-// Experiment   : E009-N1
-// Based on     : 4FE-safe-v8 / E009
-// Changes      : rename top dut->ff; instantiate uppercase FE x4
+// RTL revision : 4FE-safe-v9
+// Experiment   : E010
+// Based on     : 4FE-safe-v8a / E009-N1
+// Changes      : retime dependency target index across the I0/I1 boundary
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
@@ -117,6 +117,7 @@ module ff #(
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
   wire [NFE*AW-1:0]   pk_idx_f;
+  wire [NFE*AW-1:0]   pk_tgt_f;
   wire [NFE*2-1:0]    pk_lat_f;
   wire [D*2-1:0]      rob_src_f;
 
@@ -175,16 +176,19 @@ module ff #(
             .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
-    .rob_lat_f(rob_lat_f), .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
+    .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
+    .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
-    .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f), .rob_src_f(rob_src_f)
+    .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_lat_f(pk_lat_f), .rob_src_f(rob_src_f)
   );
 
   ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
              .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
-    .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_lat_f(pk_lat_f),
-    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .rob_tgt_f(rob_tgt_f),
+    .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_lat_f(pk_lat_f),
+    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),
     .rob_isdep(rob_isdep),
     .res_now(res_now), .fe_od_f(fe_od_f),
     .fwd_v(fwd_v), .fwd_d_f(fwd_d_f), .fwd_l_f(fwd_l_f),
