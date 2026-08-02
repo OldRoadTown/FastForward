@@ -2,10 +2,10 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v3
-// Experiment   : E004
-// Based on     : 4FE-safe-v2 / E003
-// Changes      : conservative critical marking independent of res_known
+// RTL revision : 4FE-safe-v10
+// Experiment   : E011-N2
+// Based on     : 4FE-safe-v9 / E010
+// Changes      : split data/control compaction; resolve readiness per lane
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -37,8 +37,6 @@ module ff_ingress #(
   output wire [3:0]      kw_vld_o,      // k valid && dependent
   output wire [4*AW-1:0] k_tgt_f
 );
-
-  localparam PLW = 133;                 // {ctrl[4:0], data[127:0]}
 
   // -------------------------------------------------------------------------
   // unpack
@@ -77,34 +75,79 @@ module ff_ingress #(
   // -------------------------------------------------------------------------
   // valid-lane compaction into packet order
   // -------------------------------------------------------------------------
-  reg [PLW-1:0] comp [0:3];
-  reg [2:0]     acnt;
-  wire [PLW-1:0] pl0 = {in_ctrl_q[0], in_data_q[0]};
-  wire [PLW-1:0] pl1 = {in_ctrl_q[1], in_data_q[1]};
-  wire [PLW-1:0] pl2 = {in_ctrl_q[2], in_data_q[2]};
-  wire [PLW-1:0] pl3 = {in_ctrl_q[3], in_data_q[3]};
+  reg [127:0] comp_data [0:3];
+  reg [4:0]   comp_ctrl [0:3];
+  reg [2:0]   acnt;
+
+  // Keep the wide packet-data mux independent of the narrow control mux.
+  // This prevents control-only dependency logic from inheriting a 133-bit
+  // compaction cone while preserving the exact packet-order mapping.
+  always @* begin
+    comp_data[0] = in_data_q[0];
+    comp_data[1] = in_data_q[1];
+    comp_data[2] = in_data_q[2];
+    comp_data[3] = in_data_q[3];
+    case (in_vld_q)
+      4'b0010: comp_data[0] = in_data_q[1];
+      4'b0100: comp_data[0] = in_data_q[2];
+      4'b1000: comp_data[0] = in_data_q[3];
+      4'b0101: comp_data[1] = in_data_q[2];
+      4'b1001: comp_data[1] = in_data_q[3];
+      4'b0110: begin
+        comp_data[0] = in_data_q[1];
+        comp_data[1] = in_data_q[2];
+      end
+      4'b1010: begin
+        comp_data[0] = in_data_q[1];
+        comp_data[1] = in_data_q[3];
+      end
+      4'b1100: begin
+        comp_data[0] = in_data_q[2];
+        comp_data[1] = in_data_q[3];
+      end
+      4'b1011: comp_data[2] = in_data_q[3];
+      4'b1101: begin
+        comp_data[1] = in_data_q[2];
+        comp_data[2] = in_data_q[3];
+      end
+      4'b1110: begin
+        comp_data[0] = in_data_q[1];
+        comp_data[1] = in_data_q[2];
+        comp_data[2] = in_data_q[3];
+      end
+      default: begin end
+    endcase
+  end
 
   always @* begin
-    comp[0] = pl0; comp[1] = pl1; comp[2] = pl2; comp[3] = pl3;
+    comp_ctrl[0] = in_ctrl_q[0];
+    comp_ctrl[1] = in_ctrl_q[1];
+    comp_ctrl[2] = in_ctrl_q[2];
+    comp_ctrl[3] = in_ctrl_q[3];
     acnt    = 3'd0;
     case (in_vld_q)
       4'b0000: acnt = 3'd0;
-      4'b0001: begin acnt = 3'd1; comp[0] = pl0; end
-      4'b0010: begin acnt = 3'd1; comp[0] = pl1; end
-      4'b0100: begin acnt = 3'd1; comp[0] = pl2; end
-      4'b1000: begin acnt = 3'd1; comp[0] = pl3; end
-      4'b0011: begin acnt = 3'd2; comp[0] = pl0; comp[1] = pl1; end
-      4'b0101: begin acnt = 3'd2; comp[0] = pl0; comp[1] = pl2; end
-      4'b1001: begin acnt = 3'd2; comp[0] = pl0; comp[1] = pl3; end
-      4'b0110: begin acnt = 3'd2; comp[0] = pl1; comp[1] = pl2; end
-      4'b1010: begin acnt = 3'd2; comp[0] = pl1; comp[1] = pl3; end
-      4'b1100: begin acnt = 3'd2; comp[0] = pl2; comp[1] = pl3; end
-      4'b0111: begin acnt = 3'd3; comp[0] = pl0; comp[1] = pl1; comp[2] = pl2; end
-      4'b1011: begin acnt = 3'd3; comp[0] = pl0; comp[1] = pl1; comp[2] = pl3; end
-      4'b1101: begin acnt = 3'd3; comp[0] = pl0; comp[1] = pl2; comp[2] = pl3; end
-      4'b1110: begin acnt = 3'd3; comp[0] = pl1; comp[1] = pl2; comp[2] = pl3; end
-      4'b1111: begin acnt = 3'd4; comp[0] = pl0; comp[1] = pl1;
-                     comp[2] = pl2; comp[3] = pl3; end
+      4'b0001: acnt = 3'd1;
+      4'b0010: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[1]; end
+      4'b0100: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[2]; end
+      4'b1000: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[3]; end
+      4'b0011: acnt = 3'd2;
+      4'b0101: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[2]; end
+      4'b1001: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[3]; end
+      4'b0110: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+                     comp_ctrl[1] = in_ctrl_q[2]; end
+      4'b1010: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+                     comp_ctrl[1] = in_ctrl_q[3]; end
+      4'b1100: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[2];
+                     comp_ctrl[1] = in_ctrl_q[3]; end
+      4'b0111: acnt = 3'd3;
+      4'b1011: begin acnt = 3'd3; comp_ctrl[2] = in_ctrl_q[3]; end
+      4'b1101: begin acnt = 3'd3; comp_ctrl[1] = in_ctrl_q[2];
+                     comp_ctrl[2] = in_ctrl_q[3]; end
+      4'b1110: begin acnt = 3'd3; comp_ctrl[0] = in_ctrl_q[1];
+                     comp_ctrl[1] = in_ctrl_q[2];
+                     comp_ctrl[2] = in_ctrl_q[3]; end
+      4'b1111: acnt = 3'd4;
       default: acnt = 3'd0;
     endcase
   end
@@ -115,27 +158,57 @@ module ff_ingress #(
   reg [1:0]    k_lat  [0:3];
   reg [2:0]    k_dep  [0:3];
   reg [AW-1:0] k_tgt  [0:3];
-  reg          k_rdy  [0:3];
-  reg          k_wtg  [0:3];
   reg          k_isdep[0:3];
 
   integer k;
   reg [SW-1:0] seq_k, tgt_k;
-  reg          incyc_k, tdone_k;
   always @* begin
     for (k = 0; k < 4; k = k + 1) begin
-      k_lat[k]   = comp[k][129:128];
-      k_dep[k]   = comp[k][132:130];
+      k_lat[k]   = comp_ctrl[k][1:0];
+      k_dep[k]   = comp_ctrl[k][4:2];
       k_isdep[k] = (k_dep[k] != 3'd0);
       seq_k      = alloc_seq + k[SW-1:0];
       tgt_k      = seq_k - {4'b0, k_dep[k]};
       k_tgt[k]   = tgt_k[AW-1:0];
-      // same-cycle earlier-lane target cannot be done yet
-      incyc_k    = k_isdep[k] && ({1'b0, k_dep[k]} <= k[3:0]);
-      // retained-result lookup incl. same-cycle write and next-cycle predict
-      tdone_k    = res_known[tgt_k[AW-1:0]];
-      k_rdy[k]   = !k_isdep[k] || (!incyc_k && tdone_k);
-      k_wtg[k]   = ~k_rdy[k];
+    end
+  end
+
+  // Resolve readiness directly on the four registered input lanes.  The
+  // prefix rank is the packet-order position of each valid lane.  Using the
+  // lane's own control avoids selecting dependency bits through comp_ctrl
+  // before target arithmetic; the result is written straight to its physical
+  // ROB source slot, avoiding a second ready-bit rotation mux afterwards.
+  reg [1:0]    lane_rank [0:3];
+  reg [2:0]    lane_dep [0:3];
+  reg [SW-1:0] lane_seq, lane_tgt_seq;
+  reg          lane_isdep, lane_incyc, lane_tdone;
+  reg [3:0]    slot_rdy_direct, slot_wtg_direct;
+  reg [1:0]    lane_slot;
+  integer l;
+  always @* begin
+    lane_rank[0] = 2'd0;
+    lane_rank[1] = {1'b0, in_vld_q[0]};
+    lane_rank[2] = {1'b0, in_vld_q[0]} + {1'b0, in_vld_q[1]};
+    lane_rank[3] = {1'b0, in_vld_q[0]} + {1'b0, in_vld_q[1]}
+                   + {1'b0, in_vld_q[2]};
+    slot_rdy_direct = 4'b0;
+    slot_wtg_direct = 4'b0;
+    for (l = 0; l < 4; l = l + 1) begin
+      lane_dep[l]  = in_ctrl_q[l][4:2];
+      lane_isdep   = (lane_dep[l] != 3'd0);
+      lane_seq     = alloc_seq + {{(SW-2){1'b0}}, lane_rank[l]};
+      lane_tgt_seq = lane_seq - {4'b0, lane_dep[l]};
+      lane_incyc   = lane_isdep
+                     && ({1'b0, lane_dep[l]}
+                         <= {2'b0, lane_rank[l]});
+      lane_tdone   = res_known[lane_tgt_seq[AW-1:0]];
+      lane_slot    = alloc_seq[1:0] + lane_rank[l];
+      if (in_vld_q[l]) begin
+        slot_rdy_direct[lane_slot] = !lane_isdep
+                                      || (!lane_incyc && lane_tdone);
+        slot_wtg_direct[lane_slot] = lane_isdep
+                                      && (lane_incyc || !lane_tdone);
+      end
     end
   end
 
@@ -154,11 +227,11 @@ module ff_ingress #(
   always @* begin
     for (j = 0; j < 4; j = j + 1) begin
       kj            = j[1:0] - alloc_seq[1:0];
-      slot_dat[j]   = comp[kj][127:0];
+      slot_dat[j]   = comp_data[kj];
       slot_lat[j]   = k_lat[kj];
       slot_tgt[j]   = k_tgt[kj];
-      slot_rdy[j]   = k_rdy[kj];
-      slot_wtg[j]   = k_wtg[kj];
+      slot_rdy[j]   = slot_rdy_direct[j];
+      slot_wtg[j]   = slot_wtg_direct[j];
       slot_isdep[j] = k_isdep[kj];
     end
   end

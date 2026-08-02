@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v9
-// Experiment   : E010
-// Based on     : 4FE-safe-v8a / E009-N1
-// Changes      : retime dependency target index across the I0/I1 boundary
+// RTL revision : 4FE-safe-v10
+// Experiment   : E011-N2
+// Based on     : 4FE-safe-v9 / E010
+// Changes      : split ingress data/control and resolve readiness per lane
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
