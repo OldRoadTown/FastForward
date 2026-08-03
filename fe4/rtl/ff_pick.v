@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v15
-// Experiment   : E016-N1
-// Based on     : 4FE-safe-v11 / E012-N1
-// Changes      : reuse the base-bank local PE for safe critical override
+// RTL revision : 4FE-safe-v20
+// Experiment   : E021-N1
+// Based on     : 4FE-safe-v15 / E016-N1
+// Changes      : use fixed-order one-hot bank selection in the safe picker
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -77,6 +77,93 @@ module ff_pick #(
     end
   endfunction
 
+  // Select the first non-base bank in circular age order.  Packing is
+  // {valid, physical_bank[2:0], physical_bank_onehot[7:0]}.  The explicit
+  // fixed orders avoid the safe selector's former variable rotate -> PE ->
+  // index add -> dynamic bank-read chain.  Each case arm returns the physical
+  // bank directly, so the one-hot also feeds the local result mux in parallel.
+  function [11:0] pebank_after;
+    input [7:0] v;
+    input [2:0] base_bank;
+    begin
+      pebank_after = 12'b0;
+      case (base_bank)
+        3'd0: begin
+          if      (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+        end
+        3'd1: begin
+          if      (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+        end
+        3'd2: begin
+          if      (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+        end
+        3'd3: begin
+          if      (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+        end
+        3'd4: begin
+          if      (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+        end
+        3'd5: begin
+          if      (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+        end
+        3'd6: begin
+          if      (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+        end
+        default: begin
+          if      (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+        end
+      endcase
+    end
+  endfunction
+
   // Oldest set entry relative to base.  Each physical 8-entry bank has one
   // local PE; an 8-bit bank-valid vector then selects the first bank after the
   // base bank.  The base bank is split into post-base and pre-base pieces so
@@ -139,9 +226,9 @@ module ff_pick #(
     reg [8*AW-1:0] bank_tgt_f;
     reg [7:0]  bank_v;
     reg [7:0]  base_bits, post_mask;
-    reg [7:0]  bank_rot;
-    reg [11:0] post_h, pre_h, bank_h, local_h;
-    reg [2:0]  base_bank, next_bank, other_bank;
+    reg [11:0] post_h, pre_h, bank_sel_h, local_h;
+    reg [2:0]  base_bank, other_bank;
+    reg [7:0]  other_bank_oh;
     reg [AW-1:0] post_tgt, pre_tgt, other_tgt, result_tgt;
     reg [D-1:0]  result_oh;
     reg [7:0]    result_bank_oh, result_local_oh;
@@ -179,13 +266,17 @@ module ff_pick #(
           | (tgt_f[(base_bank*8+l)*AW +: AW] & {AW{pre_h[4+l]}});
       end
 
-      bank_v[base_bank] = 1'b0;
-      next_bank  = base_bank + 3'd1;
-      bank_rot   = rotr8(bank_v, next_bank);
-      bank_h     = pe8h(bank_rot);
-      other_bank = bank_h[2:0] + next_bank;
-      local_h    = bank_h_f[other_bank*12 +: 12];
-      other_tgt  = bank_tgt_f[other_bank*AW +: AW];
+      bank_sel_h  = pebank_after(bank_v, base_bank);
+      other_bank  = bank_sel_h[10:8];
+      other_bank_oh = bank_sel_h[7:0];
+      local_h     = 12'b0;
+      other_tgt   = {AW{1'b0}};
+      for (b = 0; b < 8; b = b + 1) begin
+        local_h = local_h
+          | (bank_h_f[b*12 +: 12] & {12{other_bank_oh[b]}});
+        other_tgt = other_tgt
+          | (bank_tgt_f[b*AW +: AW] & {AW{other_bank_oh[b]}});
+      end
 
       result_oh  = {D{1'b0}};
       result_bank_oh = 8'b0;
@@ -202,15 +293,15 @@ module ff_pick #(
         for (b = 0; b < 8; b = b + 1)
           if (base_bank == b[2:0])
             result_oh[b*8 +: 8] = post_h[11:4];
-      end else if (bank_h[3]) begin
+      end else if (bank_sel_h[11]) begin
         result_v   = 1'b1;
         result_idx = {other_bank, local_h[2:0]};
         result_tgt = other_tgt;
-        result_bank_oh[other_bank] = 1'b1;
+        result_bank_oh = other_bank_oh;
         result_local_oh = local_h[11:4];
         for (b = 0; b < 8; b = b + 1)
-          if (other_bank == b[2:0])
-            result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8];
+          result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
+                                 & {8{other_bank_oh[b]}};
       end else if (pre_h[3]) begin
         result_v   = 1'b1;
         result_idx = {base_bank, pre_h[2:0]};
