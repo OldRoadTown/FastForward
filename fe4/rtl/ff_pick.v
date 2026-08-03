@@ -1,10 +1,11 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : register hierarchical bank/local ROB read selects
+// RTL revision : 4FE-safe-v14
+// Experiment   : E015-N1
+// Based on     : 4FE-safe-v11 / E012-N1
+// Changes      : decide safe critical override from cand[rbase] in parallel
+//                with the four normal/critical hierarchical selector pairs
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -306,7 +307,13 @@ module ff_pick #(
         wire [D+2*AW+16:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
         wire [AW:0] pec  = pec_h[AW:0];
-        wire use_crit = pec[AW] && (page[AW-1:0] != rbase);
+        // E015-N1 fast-head equivalence:
+        // page selects the age-oldest candidate starting at rbase, therefore
+        // (page.idx != rbase) is exactly !cand[rbase].  Use the direct head
+        // lookup so all four FE override decisions run in parallel with both
+        // hierarchical selectors instead of waiting for page.idx.  This keeps
+        // critical-first behavior and cycle scheduling bit-for-bit unchanged.
+        wire use_crit = pec[AW] && !cand[rbase];
         assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
         assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
         assign sel_tgt[gf] = use_crit ? pec_h[2*AW:AW+1]
