@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : register hierarchical bank/local ROB read selects
+// RTL revision : 4FE-safe-v13
+// Experiment   : E014-N1
+// Based on     : 4FE-safe-v11 / E012-N1
+// Changes      : split local-mask and ROB-commit picked register loads
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -261,17 +261,25 @@ module ff_pick #(
   reg [1:0]     pk_lat_q [0:NFE-1];
   reg [7:0]     pk_bank_oh_q [0:NFE-1];
   reg [7:0]     pk_local_oh_q [0:NFE-1];
-  reg [D-1:0]   picked_q;
+  // E014-N1 keeps two physically distinct copies of the same registered pick.
+  // picked_mask_q drives only the next-pick recurrence; picked_commit_q drives
+  // only the cross-module ROB commit/look-ahead loads.  Declaration and process
+  // attributes are both intentional: some synthesis front-ends otherwise
+  // preserve the net names but merge the equivalent register banks.
+  (* keep = "true", dont_touch = "true", preserve = "true", syn_preserve = 1 *)
+  reg [D-1:0]   picked_mask_q;
+  (* keep = "true", dont_touch = "true", preserve = "true", syn_preserve = 1 *)
+  reg [D-1:0]   picked_commit_q;
 
   // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
   // registers describe the same picks, but pk_idx_q no longer passes through
   // a 6-to-64 decode before feeding the next picker or ROB old_u logic.
-  assign picked = picked_q;
+  assign picked = picked_commit_q;
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
   // The one-hot mask preserves v2 scheduling behavior; the timing reduction
   // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
-  wire [D-1:0] rdy_avail = rdy_q & ~picked;
+  wire [D-1:0] rdy_avail = rdy_q & ~picked_mask_q;
   wire [D-1:0] rdy_eff   = rdy_avail
                            | (WAKE_BYPASS ? wake_now : {D{1'b0}});
   localparam [D-1:0] MASK_PHYS_EVEN = {32{2'b01}};
@@ -532,13 +540,20 @@ module ff_pick #(
   endgenerate
 
   always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      pk_v_int <= {NFE{1'b0}};
-      picked_q <= {D{1'b0}};
-    end else begin
-      pk_v_int <= pk_v_n;
-      picked_q <= picked_n;
-    end
+    if (!rst_n) pk_v_int <= {NFE{1'b0}};
+    else        pk_v_int <= pk_v_n;
+  end
+
+  (* keep = "true", dont_touch = "true", preserve = "true", syn_preserve = 1 *)
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) picked_mask_q <= {D{1'b0}};
+    else        picked_mask_q <= picked_n;
+  end
+
+  (* keep = "true", dont_touch = "true", preserve = "true", syn_preserve = 1 *)
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) picked_commit_q <= {D{1'b0}};
+    else        picked_commit_q <= picked_n;
   end
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1) begin
