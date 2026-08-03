@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v15
-// Experiment   : E016-N1
-// Based on     : 4FE-safe-v11 / E012-N1
-// Changes      : reuse the base-bank local PE for safe critical override
+// RTL revision : 4FE-safe-v20
+// Experiment   : E021-N1
+// Based on     : 4FE-safe-v15 / E016-N1
+// Changes      : use fixed-order one-hot bank selection in the safe picker
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
