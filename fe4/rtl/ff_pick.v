@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : register hierarchical bank/local ROB read selects
+// RTL revision : 4FE-safe-v15
+// Experiment   : E016-N1
+// Based on     : 4FE-safe-v11 / E012-N1
+// Changes      : reuse the base-bank local PE for safe critical override
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -128,9 +128,9 @@ module ff_pick #(
   // Safe-profile hierarchical selector returning the physical one-hot, the
   // selected entry's target payload, binary index, and the already-known
   // bank/local one-hots used by the next-cycle packet-data read:
-  // {bank_oh[7:0], local_oh[7:0], physical_onehot[D-1:0],
+  // {head_present, bank_oh[7:0], local_oh[7:0], physical_onehot[D-1:0],
   //  target[AW-1:0], valid, index[AW-1:0]}.
-  function [D+2*AW+16:0] peHoh;
+  function [D+2*AW+17:0] peHoh;
     input [D-1:0]  v;
     input [AW-1:0] base;
     input [D*AW-1:0] tgt_f;
@@ -146,7 +146,7 @@ module ff_pick #(
     reg [D-1:0]  result_oh;
     reg [7:0]    result_bank_oh, result_local_oh;
     reg [AW-1:0] result_idx;
-    reg          result_v;
+    reg          result_v, head_present;
     begin
       bank_h_f = 96'b0;
       bank_tgt_f = {(8*AW){1'b0}};
@@ -165,6 +165,11 @@ module ff_pick #(
       post_mask = 8'hff << base[2:0];
       post_h    = pe8h(base_bits & post_mask);
       pre_h     = pe8h(base_bits & ~post_mask);
+      // The post-base local PE selects rbase itself exactly when the window
+      // head is a candidate.  Export that already-computed fact so the safe
+      // critical override does not wait for the full 64-entry page index and
+      // does not infer the separate cand[rbase] 64-to-1 mux tried in E015.
+      head_present = post_h[4 + base[2:0]];
       post_tgt  = {AW{1'b0}};
       pre_tgt   = {AW{1'b0}};
       for (l = 0; l < 8; l = l + 1) begin
@@ -216,7 +221,7 @@ module ff_pick #(
           if (base_bank == b[2:0])
             result_oh[b*8 +: 8] = pre_h[11:4];
       end
-      peHoh = {result_bank_oh, result_local_oh,
+      peHoh = {head_present, result_bank_oh, result_local_oh,
                result_oh, result_tgt, result_v, result_idx};
     end
   endfunction
@@ -302,11 +307,15 @@ module ff_pick #(
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
         // use it directly instead of decoding pk_idx_n back to 64 bits.
-        wire [D+2*AW+16:0] page_h = peHoh(cand, rbase, rob_tgt_f);
-        wire [D+2*AW+16:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
+        wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
+        wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
         wire [AW:0] pec  = pec_h[AW:0];
-        wire use_crit = pec[AW] && (page[AW-1:0] != rbase);
+        // E016-N1 local-head equivalence: page.idx differs from rbase exactly
+        // when the normal selector's base-bank post-mask PE did not select
+        // rbase.  This keeps the decision parallel with the remaining bank
+        // selection while reusing an 8-entry local cone already in peHoh.
+        wire use_crit = pec[AW] && !page_h[D+2*AW+17];
         assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
         assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
         assign sel_tgt[gf] = use_crit ? pec_h[2*AW:AW+1]
