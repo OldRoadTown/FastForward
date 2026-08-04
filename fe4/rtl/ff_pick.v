@@ -1,18 +1,16 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v25
+// Experiment   : E026-R3
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : scan six head-relative 8-entry banks in the safe picker
 //
-// Per latency class: the two oldest ready candidates are found with
-// hierarchical bank/local priority selection; a packet some dependent is
-// waiting on (critical) jumps the queue (unless the age-oldest candidate is
-// the very window head). If a class has a backlog (2nd candidate) while
-// another FE is idle, the idle FE may steal it. DUAL_STEAL=0 disables both
-// matchers for the timing-safe profile; DUAL_STEAL=1 enables both matchers in
-// the throughput/full profiles.
+// The timing-safe profile considers six consecutive 8-entry banks beginning
+// at the oldest-unissued bank; the two youngest banks are deferred until the
+// ROB head advances.  Critical-first is symmetric across all four FEs inside
+// that visible window.  DUAL_STEAL=1 retains the exact two-candidate
+// hierarchical search and idle-FE stealing used by the throughput profiles.
 // gated by exact output-slot conflict checks against the ff_sched booking.
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
@@ -159,6 +157,85 @@ module ff_pick #(
           else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
           else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
           else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+        end
+      endcase
+    end
+  endfunction
+
+  // Select the first valid bank in a six-bank window starting at the ROB-head
+  // bank.  Packing is
+// {valid, physical_bank[2:0], physical_bank_onehot[7:0]}.  The explicit
+  // cases keep each winner at six inputs while rbase naturally rotates the
+  // physical start bank as the oldest-unissued pointer advances.
+  function [11:0] pebank6_from;
+    input [7:0] v;
+    input [2:0] head_bank;
+    begin
+      pebank6_from = 12'b0;
+      case (head_bank)
+        3'd0: begin
+          if      (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+        end
+        3'd1: begin
+          if      (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+        end
+        3'd2: begin
+          if      (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+        end
+        3'd3: begin
+          if      (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+        end
+        3'd4: begin
+          if      (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
+          else if (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+        end
+        3'd5: begin
+          if      (v[5]) pebank6_from = {1'b1, 3'd5, 8'h20};
+          else if (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+        end
+        3'd6: begin
+          if      (v[6]) pebank6_from = {1'b1, 3'd6, 8'h40};
+          else if (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+        end
+        default: begin
+          if      (v[7]) pebank6_from = {1'b1, 3'd7, 8'h80};
+          else if (v[0]) pebank6_from = {1'b1, 3'd0, 8'h01};
+          else if (v[1]) pebank6_from = {1'b1, 3'd1, 8'h02};
+          else if (v[2]) pebank6_from = {1'b1, 3'd2, 8'h04};
+          else if (v[3]) pebank6_from = {1'b1, 3'd3, 8'h08};
+          else if (v[4]) pebank6_from = {1'b1, 3'd4, 8'h10};
         end
       endcase
     end
@@ -317,6 +394,69 @@ module ff_pick #(
     end
   endfunction
 
+  // Head-relative-window safe selector.  Eight physical 8-entry leaf encoders
+  // stay narrow, but only six consecutive banks participate in a given cycle.
+  // The top bit reports that the normal winner came from the first scanned
+  // bank; critical-first then preserves that bank before considering a
+  // critical winner later in the same window.  Return packing matches peHoh.
+  function [D+2*AW+17:0] peHoh_scan6;
+    input [D-1:0]    v;
+    input [2:0]      head_bank;
+    input [D*AW-1:0] tgt_f;
+    integer b, l;
+    reg [95:0] bank_h_f;
+    reg [8*AW-1:0] bank_tgt_f;
+    reg [7:0] bank_v;
+    reg [11:0] bank_sel_h, local_h;
+    reg [2:0] result_bank;
+    reg [7:0] result_bank_oh;
+    reg [AW-1:0] result_tgt;
+    reg [D-1:0] result_oh;
+    reg first_bank_present;
+    begin
+      bank_h_f = 96'b0;
+      bank_tgt_f = {(8*AW){1'b0}};
+      bank_v = 8'b0;
+      for (b = 0; b < 8; b = b + 1) begin
+        bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
+        bank_v[b] = bank_h_f[b*12+3];
+        for (l = 0; l < 8; l = l + 1)
+          bank_tgt_f[b*AW +: AW] = bank_tgt_f[b*AW +: AW]
+            | (tgt_f[(b*8+l)*AW +: AW]
+               & {AW{bank_h_f[b*12+4+l]}});
+      end
+
+      bank_sel_h = pebank6_from(bank_v, head_bank);
+      result_bank = bank_sel_h[10:8];
+      result_bank_oh = bank_sel_h[7:0];
+      local_h = 12'b0;
+      result_tgt = {AW{1'b0}};
+      for (b = 0; b < 8; b = b + 1) begin
+        local_h = local_h
+          | (bank_h_f[b*12 +: 12] & {12{result_bank_oh[b]}});
+        result_tgt = result_tgt
+          | (bank_tgt_f[b*AW +: AW] & {AW{result_bank_oh[b]}});
+      end
+
+      result_oh = {D{1'b0}};
+      for (b = 0; b < 8; b = b + 1)
+        result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
+                               & {8{result_bank_oh[b]}};
+      first_bank_present = bank_sel_h[11]
+                           && (result_bank == head_bank);
+      peHoh_scan6 = {
+        first_bank_present,
+        result_bank_oh,
+        local_h[11:4],
+        result_oh,
+        result_tgt,
+        bank_sel_h[11],
+        result_bank,
+        local_h[2:0]
+      };
+    end
+  endfunction
+
   // steal-conflict on receiver for donor class cc: output slot must be free
   // in the booked pipeline and not being booked by the packet currently
   // issuing on that FE  (svr[k-1] carries sched_v[k]; need sched_v[cc+3])
@@ -398,14 +538,14 @@ module ff_pick #(
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
         // use it directly instead of decoding pk_idx_n back to 64 bits.
-        wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
-        wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
+        wire [D+2*AW+17:0] page_h = peHoh_scan6(cand, rbase[5:3],
+                                                rob_tgt_f);
+        wire [D+2*AW+17:0] pec_h  = peHoh_scan6(cand & crit_q,
+                                                rbase[5:3], rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
         wire [AW:0] pec  = pec_h[AW:0];
-        // E016-N1 local-head equivalence: page.idx differs from rbase exactly
-        // when the normal selector's base-bank post-mask PE did not select
-        // rbase.  This keeps the decision parallel with the remaining bank
-        // selection while reusing an 8-entry local cone already in peHoh.
+        // Preserve the first scanned bank before allowing a critical packet
+        // from a later bank to jump the head-relative window order.
         wire use_crit = pec[AW] && !page_h[D+2*AW+17];
         assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
         assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
