@@ -1,12 +1,14 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
+// T is the final elapsed execution time of the fixed unified testcase set;
+// it is not the clock period and not any single local-regression cycle count.
 //
 // Fixed integration contract: ff exposes only PKTIN, PKTOUT, and BKPR.  FEIN
 // and FEOUT stay internal; the top instantiates four forwarding engines.
@@ -25,7 +27,7 @@
 //
 // Architecture summary (details in docs/design_spec.md):
 //   4 FEs, primary latency-class binding + work stealing with exact
-//   output-slot bookkeeping, 64-entry unified-storage ROB, out-of-order
+//   output-slot bookkeeping, 32-entry unified-storage ROB, out-of-order
 //   issue / in-order output, pre-wake (dependent enters the FE in the same
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
@@ -66,9 +68,9 @@ module ff #(
   output wire         pkt_in_bkpr
 );
 
-  localparam D   = 64;
-  localparam AW  = 6;
-  localparam SW  = 7;
+  localparam D   = 32;
+  localparam AW  = 5;
+  localparam SW  = 6;
   localparam NFE = 4;
 
   // -------------------------------------------------------------------------

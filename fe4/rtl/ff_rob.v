@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v8
-// Experiment   : E009
-// Based on     : 4FE-safe-v7 / E008
-// Changes      : direct oldest-unissued next pointer; remove advance add chain
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : reduce the unified ROB to 32 entries and scale safe BKPR limits
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -14,9 +14,9 @@
 // guarantees no needed result is ever overwritten.
 // =============================================================================
 module ff_rob #(
-  parameter D   = 64,
-  parameter AW  = 6,
-  parameter SW  = 7,
+  parameter D   = 32,
+  parameter AW  = 5,
+  parameter SW  = 6,
   parameter NFE = 4
 )(
   input  wire                clk,
@@ -64,10 +64,11 @@ module ff_rob #(
 
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
-  //  * occupancy   : entry reuse (seq n overwrites n-64):  (D-1)-8      = 55
-  //  * issue window: retained-result overwrite hazard   : (D-7)-8-lag   = 45
-  localparam [SW-1:0] OCC_TH = 55;
-  localparam [SW-1:0] WIN_TH = 45;
+  //  * occupancy   : entry reuse (seq n overwrites n-32):  (D-1)-8      = 23
+  //  * issue window: retained-result overwrite hazard; preserve E021's
+  //                  19-entry safety reserve: D-19                    = 13
+  localparam [SW-1:0] OCC_TH = 23;
+  localparam [SW-1:0] WIN_TH = 13;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -79,53 +80,63 @@ module ff_rob #(
     end
   endfunction
 
-  function [7:0] rotr8;
-    input [7:0] v;
-    input [2:0] s;
-    reg [15:0] t;
-    begin
-      t = {v, v} >> s;
-      rotr8 = t[7:0];
-    end
-  endfunction
-
   // Oldest set entry relative to base, returned as {valid, physical index}.
-  // The two-level 8x8 search preserves exact wraparound order without a
-  // 64-bit barrel rotate followed by a flat priority encoder.
+  // The two-level 4x8 search preserves exact wraparound order without a
+  // 32-bit barrel rotate followed by a flat priority encoder.
   function [AW:0] peH;
     input [D-1:0]  v;
     input [AW-1:0] base;
     integer b;
-    reg [31:0] bank_pe_f;
-    reg [7:0]  bank_v;
+    reg [15:0] bank_pe_f;
+    reg [3:0]  bank_v;
     reg [7:0]  base_bits, post_mask;
-    reg [7:0]  bank_rot;
-    reg [3:0]  post_pe, pre_pe, bank_pe, local_pe;
-    reg [2:0]  base_bank, next_bank, other_bank;
+    reg [3:0]  post_pe, pre_pe, local_pe;
+    reg [1:0]  base_bank, other_bank;
+    reg        other_valid;
     begin
-      bank_pe_f = 32'b0;
-      bank_v    = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      bank_pe_f = 16'b0;
+      bank_v    = 4'b0;
+      for (b = 0; b < 4; b = b + 1) begin
         bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
         bank_v[b] = bank_pe_f[b*4+3];
       end
 
-      base_bank = base[5:3];
+      base_bank = base[4:3];
       base_bits = v[base_bank*8 +: 8];
       post_mask = 8'hff << base[2:0];
       post_pe   = pe8(base_bits & post_mask);
       pre_pe    = pe8(base_bits & ~post_mask);
 
       bank_v[base_bank] = 1'b0;
-      next_bank  = base_bank + 3'd1;
-      bank_rot   = rotr8(bank_v, next_bank);
-      bank_pe    = pe8(bank_rot);
-      other_bank = bank_pe[2:0] + next_bank;
+      other_bank  = 2'b0;
+      other_valid = 1'b0;
+      case (base_bank)
+        2'd0: begin
+          if      (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+          else if (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+          else if (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+        end
+        2'd1: begin
+          if      (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+          else if (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+          else if (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+        end
+        2'd2: begin
+          if      (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+          else if (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+          else if (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+        end
+        default: begin
+          if      (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+          else if (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+          else if (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+        end
+      endcase
       local_pe   = bank_pe_f[other_bank*4 +: 4];
 
       if (post_pe[3])
         peH = {1'b1, base_bank, post_pe[2:0]};
-      else if (bank_pe[3])
+      else if (other_valid)
         peH = {1'b1, other_bank, local_pe[2:0]};
       else if (pre_pe[3])
         peH = {1'b1, base_bank, pre_pe[2:0]};
@@ -223,8 +234,8 @@ module ff_rob #(
     first_niss = peH(~iss_eff, old_u_q[AW-1:0]);
     first_dist = first_niss[AW-1:0] - old_u_q[AW-1:0];
     dist_f     = alloc_seq_q - old_u_q;
-    // Reconstruct the 7-bit sequence number directly from the selected
-    // physical index.  Crossing physical slot 63 toggles the sequence epoch.
+    // Reconstruct the 6-bit sequence number directly from the selected
+    // physical index.  Crossing physical slot 31 toggles the sequence epoch.
     // The active window is kept below D entries by BKPR, so the reconstruction
     // is unambiguous and equals old_u_q + {1'b0, first_dist}.
     first_seq  = {
@@ -243,7 +254,8 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   // BKPR (registered output)
   // -------------------------------------------------------------------------
-  wire [SW-1:0] alloc_nxt = alloc_seq_q + {4'b0, acnt};
+  wire [SW-1:0] alloc_nxt = alloc_seq_q
+                            + {{(SW-3){1'b0}}, acnt};
   wire [SW-1:0] occ       = alloc_nxt - out_seq_q;
   wire [SW-1:0] win       = alloc_nxt - old_u_q;
 
@@ -306,8 +318,8 @@ module ff_rob #(
           if (res_now_r[e]) resv_q[e] <= 1'b1;
         end
       end
-      alloc_seq_q <= alloc_seq_q + {4'b0, acnt};
-      out_seq_q   <= out_seq_q + {4'b0, pop_cnt};
+      alloc_seq_q <= alloc_seq_q + {{(SW-3){1'b0}}, acnt};
+      out_seq_q   <= out_seq_q + {{(SW-3){1'b0}}, pop_cnt};
       old_u_q     <= old_u_n;
     end
   end

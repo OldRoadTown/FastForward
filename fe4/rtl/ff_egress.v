@@ -1,19 +1,19 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v3
-// Experiment   : E004
-// Based on     : 4FE-safe-v2 / E003
-// Changes      : free-running lane data registers; preserve same-cycle bypass
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : reduce the in-order data-read window from 64 to 32 entries
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
 // arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
 // =============================================================================
 module ff_egress #(
-  parameter D   = 64,
-  parameter AW  = 6,
-  parameter SW  = 7,
+  parameter D   = 32,
+  parameter AW  = 5,
+  parameter SW  = 6,
   parameter NFE = 4
 )(
   input  wire                clk,
@@ -50,9 +50,9 @@ module ff_egress #(
   wire [D-1:0] cmpl = resv_q | res_now;
 
   wire [AW-1:0] oidx0 = out_seq[AW-1:0];
-  wire [AW-1:0] oidx1 = out_seq[AW-1:0] + 6'd1;
-  wire [AW-1:0] oidx2 = out_seq[AW-1:0] + 6'd2;
-  wire [AW-1:0] oidx3 = out_seq[AW-1:0] + 6'd3;
+  wire [AW-1:0] oidx1 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd1};
+  wire [AW-1:0] oidx2 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd2};
+  wire [AW-1:0] oidx3 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd3};
   wire can0 = cmpl[oidx0] & ~outp_q[oidx0];
   wire can1 = cmpl[oidx1] & ~outp_q[oidx1];
   wire can2 = cmpl[oidx2] & ~outp_q[oidx2];
@@ -90,7 +90,7 @@ module ff_egress #(
     for (l = 0; l < 4; l = l + 1) begin
       kl         = l[1:0] - out_seq[1:0];
       out_act[l] = ({1'b0, kl} < pop_cnt);
-      osrc       = out_seq[AW-1:0] + {4'b0, kl};
+      osrc       = out_seq[AW-1:0] + {{(AW-2){1'b0}}, kl};
       osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
       out_dat[l] = res_now[osi] ? fe_od[rob_src[osi]] : rob_data[osi];
     end

@@ -2,18 +2,18 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v10
-// Experiment   : E011-N2
-// Based on     : 4FE-safe-v9 / E010
-// Changes      : split data/control compaction; resolve readiness per lane
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : use 5-bit physical indexes and 6-bit sequence numbers for R32
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
 // =============================================================================
 module ff_ingress #(
-  parameter D  = 64,
-  parameter AW = 6,
-  parameter SW = 7
+  parameter D  = 32,
+  parameter AW = 5,
+  parameter SW = 6
 )(
   input  wire            clk,
   input  wire            rst_n,
@@ -168,7 +168,7 @@ module ff_ingress #(
       k_dep[k]   = comp_ctrl[k][4:2];
       k_isdep[k] = (k_dep[k] != 3'd0);
       seq_k      = alloc_seq + k[SW-1:0];
-      tgt_k      = seq_k - {4'b0, k_dep[k]};
+      tgt_k      = seq_k - {{(SW-3){1'b0}}, k_dep[k]};
       k_tgt[k]   = tgt_k[AW-1:0];
     end
   end
@@ -197,7 +197,7 @@ module ff_ingress #(
       lane_dep[l]  = in_ctrl_q[l][4:2];
       lane_isdep   = (lane_dep[l] != 3'd0);
       lane_seq     = alloc_seq + {{(SW-2){1'b0}}, lane_rank[l]};
-      lane_tgt_seq = lane_seq - {4'b0, lane_dep[l]};
+      lane_tgt_seq = lane_seq - {{(SW-3){1'b0}}, lane_dep[l]};
       lane_incyc   = lane_isdep
                      && ({1'b0, lane_dep[l]}
                          <= {2'b0, lane_rank[l]});

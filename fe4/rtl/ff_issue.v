@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : consume I0-registered hierarchical ROB read selects
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : reduce packet/dependency reads from 64 entries to 32 entries
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -16,8 +16,8 @@
 // pipe (issue_v/issue_idx) is always fed FEIN-cycle aligned.
 // =============================================================================
 module ff_issue #(
-  parameter D        = 64,
-  parameter AW       = 6,
+  parameter D        = 32,
+  parameter AW       = 5,
   parameter NFE      = 4,
   parameter REG_FEIN = 0,
   parameter WAKE_BYPASS = 0
@@ -84,8 +84,8 @@ module ff_issue #(
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_iss
       wire [AW-1:0] ridx = pk_idx[gf];
-      wire [127:0] bank_data [0:7];
-      for (gb = 0; gb < 8; gb = gb + 1) begin : g_bank_read
+      wire [127:0] bank_data [0:3];
+      for (gb = 0; gb < 4; gb = gb + 1) begin : g_bank_read
         assign bank_data[gb] =
           (rob_data[gb*8+0] & {128{pk_local_oh[gf][0]}})
         | (rob_data[gb*8+1] & {128{pk_local_oh[gf][1]}})
@@ -100,14 +100,10 @@ module ff_issue #(
           (bank_data[0] & {128{pk_bank_oh[gf][0]}})
         | (bank_data[1] & {128{pk_bank_oh[gf][1]}})
         | (bank_data[2] & {128{pk_bank_oh[gf][2]}})
-        | (bank_data[3] & {128{pk_bank_oh[gf][3]}})
-        | (bank_data[4] & {128{pk_bank_oh[gf][4]}})
-        | (bank_data[5] & {128{pk_bank_oh[gf][5]}})
-        | (bank_data[6] & {128{pk_bank_oh[gf][6]}})
-        | (bank_data[7] & {128{pk_bank_oh[gf][7]}});
+        | (bank_data[3] & {128{pk_bank_oh[gf][3]}});
       // pk_tgt was read and registered beside pk_idx in I0.  The I1 FE-input
       // path therefore contains only the target-data read, not two cascaded
-      // 64-entry muxes (packet->target followed by target->data).
+      // 32-entry muxes (packet->target followed by target->data).
       wire [AW-1:0] tgt  = pk_tgt[gf];
       assign fein_v[gf]   = pk_v_q[gf];
       assign fein_d[gf]   = packet_data;

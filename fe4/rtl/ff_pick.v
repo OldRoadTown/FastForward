@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v28
+// Experiment   : E029-R32
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -17,8 +17,8 @@
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
 module ff_pick #(
-  parameter D           = 64,
-  parameter AW          = 6,
+  parameter D           = 32,
+  parameter AW          = 5,
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0,
@@ -56,7 +56,7 @@ module ff_pick #(
 
   // Local priority result with its one-hot form preserved.  Packing is
   // {onehot[7:0], valid, index[2:0]} so the safe picker does not have to
-  // decode a full 6-bit physical index again when building picked_n.
+  // decode a full 5-bit physical index again when building picked_n.
   function [11:0] pe8h;
     input [7:0] v;
     integer i;
@@ -67,126 +67,64 @@ module ff_pick #(
     end
   endfunction
 
-  function [7:0] rotr8;
-    input [7:0] v;
-    input [2:0] s;
-    reg [15:0] t;
-    begin
-      t = {v, v} >> s;
-      rotr8 = t[7:0];
-    end
-  endfunction
-
   // Select the first non-base bank in circular age order.  Packing is
   // {valid, physical_bank[2:0], physical_bank_onehot[7:0]}.  The explicit
   // fixed orders avoid the safe selector's former variable rotate -> PE ->
   // index add -> dynamic bank-read chain.  Each case arm returns the physical
   // bank directly, so the one-hot also feeds the local result mux in parallel.
   function [11:0] pebank_after;
-    input [7:0] v;
-    input [2:0] base_bank;
+    input [3:0] v;
+    input [1:0] base_bank;
     begin
       pebank_after = 12'b0;
       case (base_bank)
-        3'd0: begin
+        2'd0: begin
           if      (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
           else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
           else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
         end
-        3'd1: begin
+        2'd1: begin
           if      (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
           else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
           else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
         end
-        3'd2: begin
+        2'd2: begin
           if      (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
           else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
           else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
-        end
-        3'd3: begin
-          if      (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
-          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
-          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
-          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
-        end
-        3'd4: begin
-          if      (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
-          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
-          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
-          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
-          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-        end
-        3'd5: begin
-          if      (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
-          else if (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
-          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
-          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
-          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
-          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-        end
-        3'd6: begin
-          if      (v[7]) pebank_after = {1'b1, 3'd7, 8'h80};
-          else if (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
-          else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
-          else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
-          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
         end
         default: begin
           if      (v[0]) pebank_after = {1'b1, 3'd0, 8'h01};
           else if (v[1]) pebank_after = {1'b1, 3'd1, 8'h02};
           else if (v[2]) pebank_after = {1'b1, 3'd2, 8'h04};
-          else if (v[3]) pebank_after = {1'b1, 3'd3, 8'h08};
-          else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
-          else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
-          else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
         end
       endcase
     end
   endfunction
 
   // Oldest set entry relative to base.  Each physical 8-entry bank has one
-  // local PE; an 8-bit bank-valid vector then selects the first bank after the
+  // local PE; a 4-bit bank-valid vector then selects the first bank after the
   // base bank.  The base bank is split into post-base and pre-base pieces so
   // wraparound ordering remains exact.  Return value is {valid, physical idx}.
   function [AW:0] peH;
     input [D-1:0]  v;
     input [AW-1:0] base;
     integer b;
-    reg [31:0] bank_pe_f;
-    reg [7:0]  bank_v;
+    reg [15:0] bank_pe_f;
+    reg [3:0]  bank_v;
     reg [7:0]  base_bits, post_mask;
-    reg [7:0]  bank_rot;
-    reg [3:0]  post_pe, pre_pe, bank_pe, local_pe;
-    reg [2:0]  base_bank, next_bank, other_bank;
+    reg [3:0]  post_pe, pre_pe, local_pe;
+    reg [1:0]  base_bank, other_bank;
+    reg        other_valid;
     begin
-      bank_pe_f = 32'b0;
-      bank_v    = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      bank_pe_f = 16'b0;
+      bank_v    = 4'b0;
+      for (b = 0; b < 4; b = b + 1) begin
         bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
         bank_v[b] = bank_pe_f[b*4+3];
       end
 
-      base_bank = base[5:3];
+      base_bank = base[4:3];
       base_bits = v[base_bank*8 +: 8];
       post_mask = 8'hff << base[2:0];
       post_pe   = pe8(base_bits & post_mask);
@@ -195,15 +133,35 @@ module ff_pick #(
       // Search complete banks beginning with base_bank+1.  The base bank is
       // cleared because its pre-base portion is the final wraparound group.
       bank_v[base_bank] = 1'b0;
-      next_bank  = base_bank + 3'd1;
-      bank_rot   = rotr8(bank_v, next_bank);
-      bank_pe    = pe8(bank_rot);
-      other_bank = bank_pe[2:0] + next_bank;
+      other_bank  = 2'b0;
+      other_valid = 1'b0;
+      case (base_bank)
+        2'd0: begin
+          if      (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+          else if (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+          else if (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+        end
+        2'd1: begin
+          if      (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+          else if (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+          else if (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+        end
+        2'd2: begin
+          if      (bank_v[3]) begin other_valid = 1'b1; other_bank = 2'd3; end
+          else if (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+          else if (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+        end
+        default: begin
+          if      (bank_v[0]) begin other_valid = 1'b1; other_bank = 2'd0; end
+          else if (bank_v[1]) begin other_valid = 1'b1; other_bank = 2'd1; end
+          else if (bank_v[2]) begin other_valid = 1'b1; other_bank = 2'd2; end
+        end
+      endcase
       local_pe   = bank_pe_f[other_bank*4 +: 4];
 
       if (post_pe[3])
         peH = {1'b1, base_bank, post_pe[2:0]};
-      else if (bank_pe[3])
+      else if (other_valid)
         peH = {1'b1, other_bank, local_pe[2:0]};
       else if (pre_pe[3])
         peH = {1'b1, base_bank, pre_pe[2:0]};
@@ -222,23 +180,23 @@ module ff_pick #(
     input [AW-1:0] base;
     input [D*AW-1:0] tgt_f;
     integer b, l;
-    reg [95:0] bank_h_f;
-    reg [8*AW-1:0] bank_tgt_f;
-    reg [7:0]  bank_v;
+    reg [47:0] bank_h_f;
+    reg [4*AW-1:0] bank_tgt_f;
+    reg [3:0]  bank_v;
     reg [7:0]  base_bits, post_mask;
     reg [11:0] post_h, pre_h, bank_sel_h, local_h;
-    reg [2:0]  base_bank, other_bank;
-    reg [7:0]  other_bank_oh;
+    reg [1:0]  base_bank, other_bank;
+    reg [3:0]  other_bank_oh;
     reg [AW-1:0] post_tgt, pre_tgt, other_tgt, result_tgt;
     reg [D-1:0]  result_oh;
     reg [7:0]    result_bank_oh, result_local_oh;
     reg [AW-1:0] result_idx;
     reg          result_v, head_present;
     begin
-      bank_h_f = 96'b0;
-      bank_tgt_f = {(8*AW){1'b0}};
-      bank_v   = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      bank_h_f = 48'b0;
+      bank_tgt_f = {(4*AW){1'b0}};
+      bank_v   = 4'b0;
+      for (b = 0; b < 4; b = b + 1) begin
         bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
         bank_v[b] = bank_h_f[b*12+3];
         for (l = 0; l < 8; l = l + 1)
@@ -247,15 +205,14 @@ module ff_pick #(
                & {AW{bank_h_f[b*12+4+l]}});
       end
 
-      base_bank = base[5:3];
+      base_bank = base[4:3];
       base_bits = v[base_bank*8 +: 8];
       post_mask = 8'hff << base[2:0];
       post_h    = pe8h(base_bits & post_mask);
       pre_h     = pe8h(base_bits & ~post_mask);
       // The post-base local PE selects rbase itself exactly when the window
       // head is a candidate.  Export that already-computed fact so the safe
-      // critical override does not wait for the full 64-entry page index and
-      // does not infer the separate cand[rbase] 64-to-1 mux tried in E015.
+      // critical override does not wait for the full 32-entry page index.
       head_present = post_h[4 + base[2:0]];
       post_tgt  = {AW{1'b0}};
       pre_tgt   = {AW{1'b0}};
@@ -267,11 +224,11 @@ module ff_pick #(
       end
 
       bank_sel_h  = pebank_after(bank_v, base_bank);
-      other_bank  = bank_sel_h[10:8];
-      other_bank_oh = bank_sel_h[7:0];
+      other_bank  = bank_sel_h[9:8];
+      other_bank_oh = bank_sel_h[3:0];
       local_h     = 12'b0;
       other_tgt   = {AW{1'b0}};
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < 4; b = b + 1) begin
         local_h = local_h
           | (bank_h_f[b*12 +: 12] & {12{other_bank_oh[b]}});
         other_tgt = other_tgt
@@ -288,28 +245,28 @@ module ff_pick #(
         result_v   = 1'b1;
         result_idx = {base_bank, post_h[2:0]};
         result_tgt = post_tgt;
-        result_bank_oh[base_bank] = 1'b1;
+        result_bank_oh[{1'b0, base_bank}] = 1'b1;
         result_local_oh = post_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
-          if (base_bank == b[2:0])
+        for (b = 0; b < 4; b = b + 1)
+          if (base_bank == b[1:0])
             result_oh[b*8 +: 8] = post_h[11:4];
       end else if (bank_sel_h[11]) begin
         result_v   = 1'b1;
         result_idx = {other_bank, local_h[2:0]};
         result_tgt = other_tgt;
-        result_bank_oh = other_bank_oh;
+        result_bank_oh = {4'b0, other_bank_oh};
         result_local_oh = local_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
+        for (b = 0; b < 4; b = b + 1)
           result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
                                  & {8{other_bank_oh[b]}};
       end else if (pre_h[3]) begin
         result_v   = 1'b1;
         result_idx = {base_bank, pre_h[2:0]};
         result_tgt = pre_tgt;
-        result_bank_oh[base_bank] = 1'b1;
+        result_bank_oh[{1'b0, base_bank}] = 1'b1;
         result_local_oh = pre_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
-          if (base_bank == b[2:0])
+        for (b = 0; b < 4; b = b + 1)
+          if (base_bank == b[1:0])
             result_oh[b*8 +: 8] = pre_h[11:4];
       end
       peHoh = {head_present, result_bank_oh, result_local_oh,
@@ -361,16 +318,16 @@ module ff_pick #(
 
   // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
   // registers describe the same picks, but pk_idx_q no longer passes through
-  // a 6-to-64 decode before feeding the next picker or ROB old_u logic.
+  // a 5-to-32 decode before feeding the next picker or ROB old_u logic.
   assign picked = picked_q;
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
   // The one-hot mask preserves v2 scheduling behavior; the timing reduction
-  // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
+  // comes from the hierarchical selector replacing the 32-bit rotate/PE cone.
   wire [D-1:0] rdy_avail = rdy_q & ~picked;
   wire [D-1:0] rdy_eff   = rdy_avail
                            | (WAKE_BYPASS ? wake_now : {D{1'b0}});
-  localparam [D-1:0] MASK_PHYS_EVEN = {32{2'b01}};
+  localparam [D-1:0] MASK_PHYS_EVEN = {(D/2){2'b01}};
   wire [D-1:0] mask_age_even = rbase[0] ? ~MASK_PHYS_EVEN : MASK_PHYS_EVEN;
 
   // -------------------------------------------------------------------------
@@ -397,7 +354,7 @@ module ff_pick #(
       if (DUAL_STEAL == 0) begin : g_safe
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
-        // use it directly instead of decoding pk_idx_n back to 64 bits.
+        // use it directly instead of decoding pk_idx_n back to 32 bits.
         wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
         wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
@@ -584,7 +541,7 @@ module ff_pick #(
         for (sf = 0; sf < NFE; sf = sf + 1) begin
           pk_bank_oh_n[sf]  = 8'b0;
           pk_local_oh_n[sf] = 8'b0;
-          pk_bank_oh_n[sf][pk_idx_n[sf][5:3]] = 1'b1;
+          pk_bank_oh_n[sf][{1'b0, pk_idx_n[sf][4:3]}] = 1'b1;
           pk_local_oh_n[sf][pk_idx_n[sf][2:0]] = 1'b1;
         end
       end
@@ -593,7 +550,7 @@ module ff_pick #(
 
   // Retimed target read.  In the timing-safe profile, use the target payload
   // carried through the hierarchical picker.  This avoids adding a second
-  // 6-to-64 decode after pk_idx_n merely to select six target bits.
+  // 5-to-32 decode after pk_idx_n merely to select five target bits.
   // Dual-steal retains the binary read because a receiver may use a donor's
   // registered secondary index instead of its own primary one-hot.
   generate
@@ -644,7 +601,7 @@ module ff_pick #(
     for (f = 0; f < NFE; f = f + 1) begin
       pk_idx_q[f] <= pk_idx_n[f];
       // Retiming the dependency target across the existing I0/I1 boundary
-      // removes pk_idx_q -> rob_tgt[64:1] from the FE input cycle.  This is
+      // removes pk_idx_q -> rob_tgt[32:1] from the FE input cycle.  This is
       // unconditional so the picker cone cannot become an ICG-enable path.
       pk_tgt_q[f] <= pk_tgt_n[f];
       pk_lat_q[f] <= pk_lat_n[f];
