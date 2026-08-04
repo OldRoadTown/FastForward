@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v24
+// Experiment   : E025-N1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : use a 4 x (2 x 8) hierarchy in the safe picker
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -64,6 +64,24 @@ module ff_pick #(
       pe8h = 12'b0;
       for (i = 7; i >= 0; i = i - 1)
         if (v[i]) pe8h = {(8'b1 << i), 1'b1, i[2:0]};
+    end
+  endfunction
+
+  // Two 8-entry leaves form one 16-entry coarse bank.  Packing is
+  // {onehot[15:0], valid, index[3:0]}; keeping both coordinates one-hot lets
+  // the safe data-read path retain its existing 8-entry bank/local interface.
+  function [20:0] pe16h;
+    input [15:0] v;
+    reg [11:0] lo_h, hi_h;
+    begin
+      lo_h = pe8h(v[7:0]);
+      hi_h = pe8h(v[15:8]);
+      if (lo_h[3])
+        pe16h = {8'b0, lo_h[11:4], 1'b1, 1'b0, lo_h[2:0]};
+      else if (hi_h[3])
+        pe16h = {hi_h[11:4], 8'b0, 1'b1, 1'b1, hi_h[2:0]};
+      else
+        pe16h = 21'b0;
     end
   endfunction
 
@@ -159,6 +177,38 @@ module ff_pick #(
           else if (v[4]) pebank_after = {1'b1, 3'd4, 8'h10};
           else if (v[5]) pebank_after = {1'b1, 3'd5, 8'h20};
           else if (v[6]) pebank_after = {1'b1, 3'd6, 8'h40};
+        end
+      endcase
+    end
+  endfunction
+
+  // Four-way equivalent of pebank_after for the 4 x 16 safe hierarchy.
+  // Packing is {valid, physical_coarse_bank[1:0], bank_onehot[3:0]}.
+  function [6:0] pebank4_after;
+    input [3:0] v;
+    input [1:0] base_bank;
+    begin
+      pebank4_after = 7'b0;
+      case (base_bank)
+        2'd0: begin
+          if      (v[1]) pebank4_after = {1'b1, 2'd1, 4'h2};
+          else if (v[2]) pebank4_after = {1'b1, 2'd2, 4'h4};
+          else if (v[3]) pebank4_after = {1'b1, 2'd3, 4'h8};
+        end
+        2'd1: begin
+          if      (v[2]) pebank4_after = {1'b1, 2'd2, 4'h4};
+          else if (v[3]) pebank4_after = {1'b1, 2'd3, 4'h8};
+          else if (v[0]) pebank4_after = {1'b1, 2'd0, 4'h1};
+        end
+        2'd2: begin
+          if      (v[3]) pebank4_after = {1'b1, 2'd3, 4'h8};
+          else if (v[0]) pebank4_after = {1'b1, 2'd0, 4'h1};
+          else if (v[1]) pebank4_after = {1'b1, 2'd1, 4'h2};
+        end
+        default: begin
+          if      (v[0]) pebank4_after = {1'b1, 2'd0, 4'h1};
+          else if (v[1]) pebank4_after = {1'b1, 2'd1, 4'h2};
+          else if (v[2]) pebank4_after = {1'b1, 2'd2, 4'h4};
         end
       endcase
     end
@@ -317,6 +367,113 @@ module ff_pick #(
     end
   endfunction
 
+  // E025 safe-profile alternative: four 16-entry coarse banks, with each
+  // coarse bank implemented as two parallel 8-entry leaves.  This cuts the
+  // circular bank winner from eight choices to four without introducing a
+  // flat 16-entry priority encoder.  The return packing matches peHoh exactly.
+  function [D+2*AW+17:0] peHoh4x16;
+    input [D-1:0]    v;
+    input [AW-1:0]   base;
+    input [D*AW-1:0] tgt_f;
+    integer b, l;
+    reg [83:0] bank_h_f;
+    reg [4*AW-1:0] bank_tgt_f;
+    reg [3:0] bank_v;
+    reg [15:0] base_bits, post_mask;
+    reg [20:0] post_h, pre_h, local_h;
+    reg [6:0] bank_sel_h;
+    reg [1:0] base_bank, other_bank;
+    reg [3:0] other_bank_oh;
+    reg [AW-1:0] post_tgt, pre_tgt, other_tgt, result_tgt;
+    reg [D-1:0] result_oh;
+    reg [7:0] result_bank_oh, result_local_oh;
+    reg [AW-1:0] result_idx;
+    reg result_v, head_present;
+    begin
+      bank_h_f = 84'b0;
+      bank_tgt_f = {(4*AW){1'b0}};
+      bank_v = 4'b0;
+      for (b = 0; b < 4; b = b + 1) begin
+        bank_h_f[b*21 +: 21] = pe16h(v[b*16 +: 16]);
+        bank_v[b] = bank_h_f[b*21+4];
+        for (l = 0; l < 16; l = l + 1)
+          bank_tgt_f[b*AW +: AW] = bank_tgt_f[b*AW +: AW]
+            | (tgt_f[(b*16+l)*AW +: AW]
+               & {AW{bank_h_f[b*21+5+l]}});
+      end
+
+      base_bank = base[5:4];
+      base_bits = v[base_bank*16 +: 16];
+      post_mask = 16'hffff << base[3:0];
+      post_h = pe16h(base_bits & post_mask);
+      pre_h = pe16h(base_bits & ~post_mask);
+      head_present = post_h[5 + base[3:0]];
+      post_tgt = {AW{1'b0}};
+      pre_tgt = {AW{1'b0}};
+      for (l = 0; l < 16; l = l + 1) begin
+        post_tgt = post_tgt
+          | (tgt_f[(base_bank*16+l)*AW +: AW] & {AW{post_h[5+l]}});
+        pre_tgt = pre_tgt
+          | (tgt_f[(base_bank*16+l)*AW +: AW] & {AW{pre_h[5+l]}});
+      end
+
+      bank_sel_h = pebank4_after(bank_v, base_bank);
+      other_bank = bank_sel_h[5:4];
+      other_bank_oh = bank_sel_h[3:0];
+      local_h = 21'b0;
+      other_tgt = {AW{1'b0}};
+      for (b = 0; b < 4; b = b + 1) begin
+        local_h = local_h
+          | (bank_h_f[b*21 +: 21] & {21{other_bank_oh[b]}});
+        other_tgt = other_tgt
+          | (bank_tgt_f[b*AW +: AW] & {AW{other_bank_oh[b]}});
+      end
+
+      result_oh = {D{1'b0}};
+      result_bank_oh = 8'b0;
+      result_local_oh = 8'b0;
+      result_tgt = {AW{1'b0}};
+      result_idx = {AW{1'b0}};
+      result_v = 1'b0;
+      if (post_h[4]) begin
+        result_v = 1'b1;
+        result_idx = {base_bank, post_h[3:0]};
+        result_tgt = post_tgt;
+        result_local_oh = post_h[12:5] | post_h[20:13];
+        for (b = 0; b < 4; b = b + 1)
+          if (base_bank == b[1:0]) begin
+            result_oh[b*16 +: 16] = post_h[20:5];
+            result_bank_oh[b*2] = |post_h[12:5];
+            result_bank_oh[b*2+1] = |post_h[20:13];
+          end
+      end else if (bank_sel_h[6]) begin
+        result_v = 1'b1;
+        result_idx = {other_bank, local_h[3:0]};
+        result_tgt = other_tgt;
+        result_local_oh = local_h[12:5] | local_h[20:13];
+        for (b = 0; b < 4; b = b + 1) begin
+          result_oh[b*16 +: 16] = local_h[20:5]
+                                   & {16{other_bank_oh[b]}};
+          result_bank_oh[b*2] = other_bank_oh[b] & |local_h[12:5];
+          result_bank_oh[b*2+1] = other_bank_oh[b] & |local_h[20:13];
+        end
+      end else if (pre_h[4]) begin
+        result_v = 1'b1;
+        result_idx = {base_bank, pre_h[3:0]};
+        result_tgt = pre_tgt;
+        result_local_oh = pre_h[12:5] | pre_h[20:13];
+        for (b = 0; b < 4; b = b + 1)
+          if (base_bank == b[1:0]) begin
+            result_oh[b*16 +: 16] = pre_h[20:5];
+            result_bank_oh[b*2] = |pre_h[12:5];
+            result_bank_oh[b*2+1] = |pre_h[20:13];
+          end
+      end
+      peHoh4x16 = {head_present, result_bank_oh, result_local_oh,
+                   result_oh, result_tgt, result_v, result_idx};
+    end
+  endfunction
+
   // steal-conflict on receiver for donor class cc: output slot must be free
   // in the booked pipeline and not being booked by the packet currently
   // issuing on that FE  (svr[k-1] carries sched_v[k]; need sched_v[cc+3])
@@ -398,14 +555,15 @@ module ff_pick #(
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
         // use it directly instead of decoding pk_idx_n back to 64 bits.
-        wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
-        wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
+        wire [D+2*AW+17:0] page_h = peHoh4x16(cand, rbase, rob_tgt_f);
+        wire [D+2*AW+17:0] pec_h  = peHoh4x16(cand & crit_q, rbase,
+                                             rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
         wire [AW:0] pec  = pec_h[AW:0];
         // E016-N1 local-head equivalence: page.idx differs from rbase exactly
         // when the normal selector's base-bank post-mask PE did not select
         // rbase.  This keeps the decision parallel with the remaining bank
-        // selection while reusing an 8-entry local cone already in peHoh.
+        // selection while reusing a local cone already in peHoh4x16.
         wire use_crit = pec[AW] && !page_h[D+2*AW+17];
         assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
         assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
