@@ -9,8 +9,8 @@
 1. RTL 变化先提交，记录完整 Git SHA。
 2. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；
    任一项变化时新开一组实验，不与旧数据直接比较。
-3. 同时记录所有统一用例的 cycles，并计算
-   `T = clock_period × weighted_total_cycles`。
+3. `T` 必须采用固定统一用例集完整运行后得到的最终执行时间；单个
+   本地回归的 cycles 或单独的时钟周期只能作为代理，不能替代 `T`。
 4. 记录 worst path 的 startpoint、endpoint、arrival、required 和
    slack；不能只记录 slack。
 5. Area、Power、T 均齐全后再计算
@@ -28,6 +28,7 @@
 | safe-v3 | 0 | 0 | 0 | 分层选择；关闭偷取；关键标记/egress 门控解耦 |
 | safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
+| rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 
 ## 结果
 
@@ -40,6 +41,7 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
+| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 
 ## 分支与提交约定
 
@@ -53,5 +55,7 @@
   `pk_idx_q → picked → next-pick/old_u`，并去除 crit/outp 的逐位 ICG 使能。
 - `timing/4fe-safe-selector-v5`：从 safe-v4 创建，精简 safe 模式的
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
+- `timing/4fe-rob32-v28`：从 E021 创建的 E029 独立实验；ROB 32 项、
+  picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
