@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v29
+// Experiment   : E030-P16
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : pipeline the safe picker between 4x16 local and global select
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -64,6 +64,110 @@ module ff_pick #(
       pe8h = 12'b0;
       for (i = 7; i >= 0; i = i - 1)
         if (v[i]) pe8h = {(8'b1 << i), 1'b1, i[2:0]};
+    end
+  endfunction
+
+  // Compact 16-entry local result used at the safe picker's P0/P1 boundary.
+  // Two 8-entry leaves run in parallel. Packing is
+  // {leaf_onehot[7:0], target[AW-1:0], valid, local_index[3:0]}.
+  function [AW+12:0] pe16m;
+    input [15:0] v;
+    input [16*AW-1:0] tgt_f;
+    integer i;
+    reg [11:0] lo_h, hi_h;
+    reg [AW-1:0] lo_tgt, hi_tgt;
+    begin
+      lo_h = pe8h(v[7:0]);
+      hi_h = pe8h(v[15:8]);
+      lo_tgt = {AW{1'b0}};
+      hi_tgt = {AW{1'b0}};
+      for (i = 0; i < 8; i = i + 1) begin
+        lo_tgt = lo_tgt
+          | (tgt_f[i*AW +: AW] & {AW{lo_h[4+i]}});
+        hi_tgt = hi_tgt
+          | (tgt_f[(i+8)*AW +: AW] & {AW{hi_h[4+i]}});
+      end
+      if (lo_h[3])
+        pe16m = {lo_h[11:4], lo_tgt, 1'b1, 1'b0, lo_h[2:0]};
+      else if (hi_h[3])
+        pe16m = {hi_h[11:4], hi_tgt, 1'b1, 1'b1, hi_h[2:0]};
+      else
+        pe16m = {(AW+13){1'b0}};
+    end
+  endfunction
+
+  // P1 chooses only a six-bit candidate one-hot. Payload muxing then uses a
+  // balanced AND/OR tree so the priority chain is not replicated per bit.
+  // Selection bits are {bank3, bank2, bank1, bank0, pre, post}.
+  function [5:0] pe4sel;
+    input post_v;
+    input pre_v;
+    input [3:0] bank_v;
+    input [1:0] base_group;
+    begin
+      pe4sel = 6'b0;
+      if (post_v)
+        pe4sel[0] = 1'b1;
+      else begin
+        case (base_group)
+          2'd0: begin
+            if      (bank_v[1]) pe4sel[3] = 1'b1;
+            else if (bank_v[2]) pe4sel[4] = 1'b1;
+            else if (bank_v[3]) pe4sel[5] = 1'b1;
+            else if (pre_v)     pe4sel[1] = 1'b1;
+          end
+          2'd1: begin
+            if      (bank_v[2]) pe4sel[4] = 1'b1;
+            else if (bank_v[3]) pe4sel[5] = 1'b1;
+            else if (bank_v[0]) pe4sel[2] = 1'b1;
+            else if (pre_v)     pe4sel[1] = 1'b1;
+          end
+          2'd2: begin
+            if      (bank_v[3]) pe4sel[5] = 1'b1;
+            else if (bank_v[0]) pe4sel[2] = 1'b1;
+            else if (bank_v[1]) pe4sel[3] = 1'b1;
+            else if (pre_v)     pe4sel[1] = 1'b1;
+          end
+          default: begin
+            if      (bank_v[0]) pe4sel[2] = 1'b1;
+            else if (bank_v[1]) pe4sel[3] = 1'b1;
+            else if (bank_v[2]) pe4sel[4] = 1'b1;
+            else if (pre_v)     pe4sel[1] = 1'b1;
+          end
+        endcase
+      end
+    end
+  endfunction
+
+  function [AW+12:0] mux6m;
+    input [AW+12:0] post_m;
+    input [AW+12:0] pre_m;
+    input [AW+12:0] b0_m;
+    input [AW+12:0] b1_m;
+    input [AW+12:0] b2_m;
+    input [AW+12:0] b3_m;
+    input [5:0] sel;
+    reg [AW+12:0] p0, p1, p2;
+    begin
+      p0 = (post_m & {(AW+13){sel[0]}})
+           | (pre_m & {(AW+13){sel[1]}});
+      p1 = (b0_m & {(AW+13){sel[2]}})
+           | (b1_m & {(AW+13){sel[3]}});
+      p2 = (b2_m & {(AW+13){sel[4]}})
+           | (b3_m & {(AW+13){sel[5]}});
+      mux6m = (p0 | p1) | p2;
+    end
+  endfunction
+
+  function [1:0] group6;
+    input [5:0] sel;
+    input [1:0] base_group;
+    begin
+      group6 = base_group;
+      if      (sel[2]) group6 = 2'd0;
+      else if (sel[3]) group6 = 2'd1;
+      else if (sel[4]) group6 = 2'd2;
+      else if (sel[5]) group6 = 2'd3;
     end
   endfunction
 
@@ -358,6 +462,19 @@ module ff_pick #(
   reg [7:0]     pk_bank_oh_q [0:NFE-1];
   reg [7:0]     pk_local_oh_q [0:NFE-1];
   reg [D-1:0]   picked_q;
+  reg [D-1:0]   picked_n;
+
+  // Shared P0 snapshot state for the safe picker. The compact metadata
+  // registers are intentionally unreset and written every cycle; p0_ready_q
+  // qualifies them during pipeline fill so they cannot infer clock gates.
+  reg [1:0] p0_base_q;
+  reg       p0_ready_q;
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) p0_ready_q <= 1'b0;
+    else        p0_ready_q <= 1'b1;
+  end
+  always @(posedge clk)
+    p0_base_q <= rbase[5:4];
 
   // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
   // registers describe the same picks, but pk_idx_q no longer passes through
@@ -365,8 +482,8 @@ module ff_pick #(
   assign picked = picked_q;
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
-  // The one-hot mask preserves v2 scheduling behavior; the timing reduction
-  // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
+  // P1 re-validates registered local winners against the prior class pick;
+  // stale winners are skipped without feeding P1 selection back into P0.
   wire [D-1:0] rdy_avail = rdy_q & ~picked;
   wire [D-1:0] rdy_eff   = rdy_avail
                            | (WAKE_BYPASS ? wake_now : {D{1'b0}});
@@ -395,30 +512,146 @@ module ff_pick #(
           cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
       end
       if (DUAL_STEAL == 0) begin : g_safe
-        // The safe profile consumes only the primary candidate.  Preserve the
-        // hierarchical one-hot result beside its binary index so picked_n can
-        // use it directly instead of decoding pk_idx_n back to 64 bits.
-        wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
-        wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
-        wire [AW:0] page = page_h[AW:0];
-        wire [AW:0] pec  = pec_h[AW:0];
-        // E016-N1 local-head equivalence: page.idx differs from rbase exactly
-        // when the normal selector's base-bank post-mask PE did not select
-        // rbase.  This keeps the decision parallel with the remaining bank
-        // selection while reusing an 8-entry local cone already in peHoh.
-        wire use_crit = pec[AW] && !page_h[D+2*AW+17];
-        assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
-        assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
-        assign sel_tgt[gf] = use_crit ? pec_h[2*AW:AW+1]
-                                      : page_h[2*AW:AW+1];
-        assign sel_oh[gf]  = use_crit ? pec_h[D+2*AW:2*AW+1]
-                                      : page_h[D+2*AW:2*AW+1];
-        assign sel_local_oh[gf] = use_crit
-                                  ? pec_h[D+2*AW+8:D+2*AW+1]
-                                  : page_h[D+2*AW+8:D+2*AW+1];
-        assign sel_bank_oh[gf]  = use_crit
-                                  ? pec_h[D+2*AW+16:D+2*AW+9]
-                                  : page_h[D+2*AW+16:D+2*AW+9];
+        localparam P0MW = AW + 13;
+        reg [P0MW-1:0] page_b0_q, page_b1_q, page_b2_q, page_b3_q;
+        reg [P0MW-1:0] page_post_q, page_pre_q;
+        reg [P0MW-1:0] pec_b0_q, pec_b1_q, pec_b2_q, pec_b3_q;
+        reg [P0MW-1:0] pec_post_q, pec_pre_q;
+        reg            page_head_q;
+
+        // P0 consumes only registered ROB/pick state. P1 re-validates the
+        // prior winner against this class's registered pick before commit.
+        wire [D-1:0] p0_cand = cand;
+        wire [D-1:0] p0_crit = p0_cand & crit_q;
+        wire [15:0] post_mask = 16'hffff << rbase[3:0];
+        wire [15:0] base_cand =
+          p0_cand[(rbase[5:4] * 16) +: 16];
+        wire [15:0] base_crit =
+          p0_crit[(rbase[5:4] * 16) +: 16];
+        wire [16*AW-1:0] base_tgt =
+          rob_tgt_f[(rbase[5:4] * 16 * AW) +: 16*AW];
+
+        wire [P0MW-1:0] page_b0_n =
+          pe16m(p0_cand[0*16 +: 16], rob_tgt_f[0*16*AW +: 16*AW]);
+        wire [P0MW-1:0] page_b1_n =
+          pe16m(p0_cand[1*16 +: 16], rob_tgt_f[1*16*AW +: 16*AW]);
+        wire [P0MW-1:0] page_b2_n =
+          pe16m(p0_cand[2*16 +: 16], rob_tgt_f[2*16*AW +: 16*AW]);
+        wire [P0MW-1:0] page_b3_n =
+          pe16m(p0_cand[3*16 +: 16], rob_tgt_f[3*16*AW +: 16*AW]);
+        wire [P0MW-1:0] page_post_n =
+          pe16m(base_cand & post_mask, base_tgt);
+        wire [P0MW-1:0] page_pre_n =
+          pe16m(base_cand & ~post_mask, base_tgt);
+
+        wire [P0MW-1:0] pec_b0_n =
+          pe16m(p0_crit[0*16 +: 16], rob_tgt_f[0*16*AW +: 16*AW]);
+        wire [P0MW-1:0] pec_b1_n =
+          pe16m(p0_crit[1*16 +: 16], rob_tgt_f[1*16*AW +: 16*AW]);
+        wire [P0MW-1:0] pec_b2_n =
+          pe16m(p0_crit[2*16 +: 16], rob_tgt_f[2*16*AW +: 16*AW]);
+        wire [P0MW-1:0] pec_b3_n =
+          pe16m(p0_crit[3*16 +: 16], rob_tgt_f[3*16*AW +: 16*AW]);
+        wire [P0MW-1:0] pec_post_n =
+          pe16m(base_crit & post_mask, base_tgt);
+        wire [P0MW-1:0] pec_pre_n =
+          pe16m(base_crit & ~post_mask, base_tgt);
+
+        always @(posedge clk) begin
+          page_b0_q   <= page_b0_n;
+          page_b1_q   <= page_b1_n;
+          page_b2_q   <= page_b2_n;
+          page_b3_q   <= page_b3_n;
+          page_post_q <= page_post_n;
+          page_pre_q  <= page_pre_n;
+          pec_b0_q    <= pec_b0_n;
+          pec_b1_q    <= pec_b1_n;
+          pec_b2_q    <= pec_b2_n;
+          pec_b3_q    <= pec_b3_n;
+          pec_post_q  <= pec_post_n;
+          pec_pre_q   <= pec_pre_n;
+          page_head_q <= page_post_n[4]
+                         && (page_post_n[3:0] == rbase[3:0]);
+        end
+
+        // P1 first selects a narrow one-hot control, then muxes payload in a
+        // balanced tree. The only stale entry possible is this class's prior
+        // registered pick.
+        wire stale_v = pk_v_int[gf];
+        wire page_post_v = page_post_q[4]
+          && !(stale_v
+               && (pk_idx_q[gf] == {p0_base_q, page_post_q[3:0]}));
+        wire page_pre_v = page_pre_q[4]
+          && !(stale_v
+               && (pk_idx_q[gf] == {p0_base_q, page_pre_q[3:0]}));
+        wire [3:0] page_bank_v = {
+          page_b3_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd3, page_b3_q[3:0]})),
+          page_b2_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd2, page_b2_q[3:0]})),
+          page_b1_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd1, page_b1_q[3:0]})),
+          page_b0_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd0, page_b0_q[3:0]}))
+        };
+        wire pec_post_v = pec_post_q[4]
+          && !(stale_v
+               && (pk_idx_q[gf] == {p0_base_q, pec_post_q[3:0]}));
+        wire pec_pre_v = pec_pre_q[4]
+          && !(stale_v
+               && (pk_idx_q[gf] == {p0_base_q, pec_pre_q[3:0]}));
+        wire [3:0] pec_bank_v = {
+          pec_b3_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd3, pec_b3_q[3:0]})),
+          pec_b2_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd2, pec_b2_q[3:0]})),
+          pec_b1_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd1, pec_b1_q[3:0]})),
+          pec_b0_q[4] && !(stale_v
+            && (pk_idx_q[gf] == {2'd0, pec_b0_q[3:0]}))
+        };
+
+        wire [5:0] page_sel = pe4sel(page_post_v, page_pre_v,
+                                      page_bank_v, p0_base_q);
+        wire [5:0] pec_sel = pe4sel(pec_post_v, pec_pre_v,
+                                    pec_bank_v, p0_base_q);
+        wire [P0MW-1:0] page_m = mux6m(page_post_q, page_pre_q,
+                                       page_b0_q, page_b1_q,
+                                       page_b2_q, page_b3_q, page_sel);
+        wire [P0MW-1:0] pec_m = mux6m(pec_post_q, pec_pre_q,
+                                      pec_b0_q, pec_b1_q,
+                                      pec_b2_q, pec_b3_q, pec_sel);
+        wire [1:0] page_group = group6(page_sel, p0_base_q);
+        wire [1:0] pec_group = group6(pec_sel, p0_base_q);
+        wire             page_head_live = page_head_q && page_post_v;
+        wire             use_crit = pec_m[4] && !page_head_live;
+        wire [P0MW-1:0] sel_m = use_crit ? pec_m : page_m;
+        wire [1:0] sel_group = use_crit ? pec_group : page_group;
+        wire [7:0] sel_leaf_oh = sel_m[AW+12:AW+5];
+        wire [15:0] sel_local16 = sel_m[3]
+                                  ? {sel_leaf_oh, 8'b0}
+                                  : {8'b0, sel_leaf_oh};
+        reg [D-1:0] sel_phys_oh;
+        always @* begin
+          sel_phys_oh = {D{1'b0}};
+          if (p0_ready_q && sel_m[4]) begin
+            case (sel_group)
+              2'd0: sel_phys_oh[0*16 +: 16] = sel_local16;
+              2'd1: sel_phys_oh[1*16 +: 16] = sel_local16;
+              2'd2: sel_phys_oh[2*16 +: 16] = sel_local16;
+              default: sel_phys_oh[3*16 +: 16] = sel_local16;
+            endcase
+          end
+        end
+
+        assign fnd_raw[gf] = p0_ready_q && sel_m[4];
+        assign sel_idx[gf] = {sel_group, sel_m[3:0]};
+        assign sel_tgt[gf] = sel_m[AW+4:5];
+        assign sel_oh[gf] = sel_phys_oh;
+        assign sel_bank_oh[gf] = fnd_raw[gf]
+                                 ? (8'b1 << sel_idx[gf][5:3]) : 8'b0;
+        assign sel_local_oh[gf] = fnd_raw[gf]
+                                  ? sel_leaf_oh : 8'b0;
         assign sec_fnd[gf] = 1'b0;
         assign sec_sel[gf] = {AW{1'b0}};
       end else begin : g_dual
@@ -612,7 +845,6 @@ module ff_pick #(
     end
   endgenerate
 
-  reg [D-1:0] picked_n;
   generate
     if (DUAL_STEAL == 0) begin : g_safe_picked
       integer pf;
