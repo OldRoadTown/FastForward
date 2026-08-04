@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v29
-// Experiment   : E030-P16
+// RTL revision : 4FE-safe-v29-8x8-ab
+// Experiment   : AB-P8
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : pipeline the safe picker between 4x16 local and global select
+// Changes      : pipeline the safe picker between 8x8 local and global select
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -67,107 +67,121 @@ module ff_pick #(
     end
   endfunction
 
-  // Compact 16-entry local result used at the safe picker's P0/P1 boundary.
-  // Two 8-entry leaves run in parallel. Packing is
-  // {leaf_onehot[7:0], target[AW-1:0], valid, local_index[3:0]}.
-  function [AW+12:0] pe16m;
-    input [15:0] v;
-    input [16*AW-1:0] tgt_f;
+  // Compact 8-entry local result used at the safe picker's P0/P1 boundary.
+  // Packing is {onehot[7:0], target[AW-1:0], valid, local_index[2:0]}.
+  function [AW+11:0] pe8m;
+    input [7:0] v;
+    input [8*AW-1:0] tgt_f;
     integer i;
-    reg [11:0] lo_h, hi_h;
-    reg [AW-1:0] lo_tgt, hi_tgt;
+    reg [11:0] h;
+    reg [AW-1:0] tgt;
     begin
-      lo_h = pe8h(v[7:0]);
-      hi_h = pe8h(v[15:8]);
-      lo_tgt = {AW{1'b0}};
-      hi_tgt = {AW{1'b0}};
+      h = pe8h(v);
+      tgt = {AW{1'b0}};
       for (i = 0; i < 8; i = i + 1) begin
-        lo_tgt = lo_tgt
-          | (tgt_f[i*AW +: AW] & {AW{lo_h[4+i]}});
-        hi_tgt = hi_tgt
-          | (tgt_f[(i+8)*AW +: AW] & {AW{hi_h[4+i]}});
+        tgt = tgt | (tgt_f[i*AW +: AW] & {AW{h[4+i]}});
       end
-      if (lo_h[3])
-        pe16m = {lo_h[11:4], lo_tgt, 1'b1, 1'b0, lo_h[2:0]};
-      else if (hi_h[3])
-        pe16m = {hi_h[11:4], hi_tgt, 1'b1, 1'b1, hi_h[2:0]};
-      else
-        pe16m = {(AW+13){1'b0}};
+      pe8m = {h[11:4], tgt, h[3:0]};
     end
   endfunction
 
-  // P1 chooses only a six-bit candidate one-hot. Payload muxing then uses a
-  // balanced AND/OR tree so the priority chain is not replicated per bit.
-  // Selection bits are {bank3, bank2, bank1, bank0, pre, post}.
-  function [5:0] pe4sel;
+  // Return a one-hot winner with bit 0 as the oldest input. The hierarchy
+  // bounds priority depth instead of building an eight-input if/else chain.
+  function [7:0] pe8first;
+    input [7:0] v;
+    reg [3:0] lo_sel, hi_sel;
+    reg       lo_any;
+    begin
+      lo_sel[0] = v[0];
+      lo_sel[1] = v[1] && !v[0];
+      lo_sel[2] = v[2] && !(|v[1:0]);
+      lo_sel[3] = v[3] && !(|v[2:0]);
+      hi_sel[0] = v[4];
+      hi_sel[1] = v[5] && !v[4];
+      hi_sel[2] = v[6] && !(|v[5:4]);
+      hi_sel[3] = v[7] && !(|v[6:4]);
+      lo_any = |v[3:0];
+      pe8first = {hi_sel & {4{!lo_any}}, lo_sel};
+    end
+  endfunction
+
+  // P1 rotates bank valids into age order, runs a bounded-depth PE, then
+  // rotates the one-hot winner back. Selection bits are
+  // {bank7..bank0, pre, post}.
+  function [9:0] pe8sel;
     input post_v;
     input pre_v;
-    input [3:0] bank_v;
-    input [1:0] base_group;
+    input [7:0] bank_v;
+    input [2:0] base_bank;
+    reg [7:0] age_v, age_sel, bank_sel;
     begin
-      pe4sel = 6'b0;
-      if (post_v)
-        pe4sel[0] = 1'b1;
+      case (base_bank)
+        3'd0: age_v = {1'b0, bank_v[7:1]};
+        3'd1: age_v = {1'b0, bank_v[0], bank_v[7:2]};
+        3'd2: age_v = {1'b0, bank_v[1:0], bank_v[7:3]};
+        3'd3: age_v = {1'b0, bank_v[2:0], bank_v[7:4]};
+        3'd4: age_v = {1'b0, bank_v[3:0], bank_v[7:5]};
+        3'd5: age_v = {1'b0, bank_v[4:0], bank_v[7:6]};
+        3'd6: age_v = {1'b0, bank_v[5:0], bank_v[7]};
+        default: age_v = {1'b0, bank_v[6:0]};
+      endcase
+      age_sel = pe8first(age_v);
+      case (base_bank)
+        3'd0: bank_sel = {age_sel[6:0], 1'b0};
+        3'd1: bank_sel = {age_sel[5:0], 1'b0, age_sel[6]};
+        3'd2: bank_sel = {age_sel[4:0], 1'b0, age_sel[6:5]};
+        3'd3: bank_sel = {age_sel[3:0], 1'b0, age_sel[6:4]};
+        3'd4: bank_sel = {age_sel[2:0], 1'b0, age_sel[6:3]};
+        3'd5: bank_sel = {age_sel[1:0], 1'b0, age_sel[6:2]};
+        3'd6: bank_sel = {age_sel[0], 1'b0, age_sel[6:1]};
+        default: bank_sel = {1'b0, age_sel[6:0]};
+      endcase
+      pe8sel = 10'b0;
+      pe8sel[0] = post_v;
+      pe8sel[9:2] = bank_sel & {8{!post_v}};
+      pe8sel[1] = pre_v && !post_v && !(|age_v);
+    end
+  endfunction
+
+  function [AW+11:0] mux10m;
+    input [AW+11:0] post_m;
+    input [AW+11:0] pre_m;
+    input [AW+11:0] b0_m;
+    input [AW+11:0] b1_m;
+    input [AW+11:0] b2_m;
+    input [AW+11:0] b3_m;
+    input [AW+11:0] b4_m;
+    input [AW+11:0] b5_m;
+    input [AW+11:0] b6_m;
+    input [AW+11:0] b7_m;
+    input [9:0] sel;
+    reg [AW+11:0] p0, p1, p2, p3, p4;
+    begin
+      p0 = (post_m & {(AW+12){sel[0]}})
+           | (pre_m & {(AW+12){sel[1]}});
+      p1 = (b0_m & {(AW+12){sel[2]}})
+           | (b1_m & {(AW+12){sel[3]}});
+      p2 = (b2_m & {(AW+12){sel[4]}})
+           | (b3_m & {(AW+12){sel[5]}});
+      p3 = (b4_m & {(AW+12){sel[6]}})
+           | (b5_m & {(AW+12){sel[7]}});
+      p4 = (b6_m & {(AW+12){sel[8]}})
+           | (b7_m & {(AW+12){sel[9]}});
+      mux10m = ((p0 | p1) | (p2 | p3)) | p4;
+    end
+  endfunction
+
+  function [2:0] bank10;
+    input [9:0] sel;
+    input [2:0] base_bank;
+    begin
+      if (sel[0] || sel[1])
+        bank10 = base_bank;
       else begin
-        case (base_group)
-          2'd0: begin
-            if      (bank_v[1]) pe4sel[3] = 1'b1;
-            else if (bank_v[2]) pe4sel[4] = 1'b1;
-            else if (bank_v[3]) pe4sel[5] = 1'b1;
-            else if (pre_v)     pe4sel[1] = 1'b1;
-          end
-          2'd1: begin
-            if      (bank_v[2]) pe4sel[4] = 1'b1;
-            else if (bank_v[3]) pe4sel[5] = 1'b1;
-            else if (bank_v[0]) pe4sel[2] = 1'b1;
-            else if (pre_v)     pe4sel[1] = 1'b1;
-          end
-          2'd2: begin
-            if      (bank_v[3]) pe4sel[5] = 1'b1;
-            else if (bank_v[0]) pe4sel[2] = 1'b1;
-            else if (bank_v[1]) pe4sel[3] = 1'b1;
-            else if (pre_v)     pe4sel[1] = 1'b1;
-          end
-          default: begin
-            if      (bank_v[0]) pe4sel[2] = 1'b1;
-            else if (bank_v[1]) pe4sel[3] = 1'b1;
-            else if (bank_v[2]) pe4sel[4] = 1'b1;
-            else if (pre_v)     pe4sel[1] = 1'b1;
-          end
-        endcase
+        bank10[0] = sel[3] || sel[5] || sel[7] || sel[9];
+        bank10[1] = sel[4] || sel[5] || sel[8] || sel[9];
+        bank10[2] = sel[6] || sel[7] || sel[8] || sel[9];
       end
-    end
-  endfunction
-
-  function [AW+12:0] mux6m;
-    input [AW+12:0] post_m;
-    input [AW+12:0] pre_m;
-    input [AW+12:0] b0_m;
-    input [AW+12:0] b1_m;
-    input [AW+12:0] b2_m;
-    input [AW+12:0] b3_m;
-    input [5:0] sel;
-    reg [AW+12:0] p0, p1, p2;
-    begin
-      p0 = (post_m & {(AW+13){sel[0]}})
-           | (pre_m & {(AW+13){sel[1]}});
-      p1 = (b0_m & {(AW+13){sel[2]}})
-           | (b1_m & {(AW+13){sel[3]}});
-      p2 = (b2_m & {(AW+13){sel[4]}})
-           | (b3_m & {(AW+13){sel[5]}});
-      mux6m = (p0 | p1) | p2;
-    end
-  endfunction
-
-  function [1:0] group6;
-    input [5:0] sel;
-    input [1:0] base_group;
-    begin
-      group6 = base_group;
-      if      (sel[2]) group6 = 2'd0;
-      else if (sel[3]) group6 = 2'd1;
-      else if (sel[4]) group6 = 2'd2;
-      else if (sel[5]) group6 = 2'd3;
     end
   endfunction
 
@@ -467,14 +481,14 @@ module ff_pick #(
   // Shared P0 snapshot state for the safe picker. The compact metadata
   // registers are intentionally unreset and written every cycle; p0_ready_q
   // qualifies them during pipeline fill so they cannot infer clock gates.
-  reg [1:0] p0_base_q;
+  reg [2:0] p0_base_q;
   reg       p0_ready_q;
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) p0_ready_q <= 1'b0;
     else        p0_ready_q <= 1'b1;
   end
   always @(posedge clk)
-    p0_base_q <= rbase[5:4];
+    p0_base_q <= rbase[5:3];
 
   // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
   // registers describe the same picks, but pk_idx_q no longer passes through
@@ -512,10 +526,12 @@ module ff_pick #(
           cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
       end
       if (DUAL_STEAL == 0) begin : g_safe
-        localparam P0MW = AW + 13;
+        localparam P0MW = AW + 12;
         reg [P0MW-1:0] page_b0_q, page_b1_q, page_b2_q, page_b3_q;
+        reg [P0MW-1:0] page_b4_q, page_b5_q, page_b6_q, page_b7_q;
         reg [P0MW-1:0] page_post_q, page_pre_q;
         reg [P0MW-1:0] pec_b0_q, pec_b1_q, pec_b2_q, pec_b3_q;
+        reg [P0MW-1:0] pec_b4_q, pec_b5_q, pec_b6_q, pec_b7_q;
         reg [P0MW-1:0] pec_post_q, pec_pre_q;
         reg            page_head_q;
 
@@ -523,130 +539,175 @@ module ff_pick #(
         // prior winner against this class's registered pick before commit.
         wire [D-1:0] p0_cand = cand;
         wire [D-1:0] p0_crit = p0_cand & crit_q;
-        wire [15:0] post_mask = 16'hffff << rbase[3:0];
-        wire [15:0] base_cand =
-          p0_cand[(rbase[5:4] * 16) +: 16];
-        wire [15:0] base_crit =
-          p0_crit[(rbase[5:4] * 16) +: 16];
-        wire [16*AW-1:0] base_tgt =
-          rob_tgt_f[(rbase[5:4] * 16 * AW) +: 16*AW];
+        wire [7:0] post_mask = 8'hff << rbase[2:0];
+        wire [7:0] base_cand =
+          p0_cand[(rbase[5:3] * 8) +: 8];
+        wire [7:0] base_crit =
+          p0_crit[(rbase[5:3] * 8) +: 8];
+        wire [8*AW-1:0] base_tgt =
+          rob_tgt_f[(rbase[5:3] * 8 * AW) +: 8*AW];
 
         wire [P0MW-1:0] page_b0_n =
-          pe16m(p0_cand[0*16 +: 16], rob_tgt_f[0*16*AW +: 16*AW]);
+          pe8m(p0_cand[0*8 +: 8], rob_tgt_f[0*8*AW +: 8*AW]);
         wire [P0MW-1:0] page_b1_n =
-          pe16m(p0_cand[1*16 +: 16], rob_tgt_f[1*16*AW +: 16*AW]);
+          pe8m(p0_cand[1*8 +: 8], rob_tgt_f[1*8*AW +: 8*AW]);
         wire [P0MW-1:0] page_b2_n =
-          pe16m(p0_cand[2*16 +: 16], rob_tgt_f[2*16*AW +: 16*AW]);
+          pe8m(p0_cand[2*8 +: 8], rob_tgt_f[2*8*AW +: 8*AW]);
         wire [P0MW-1:0] page_b3_n =
-          pe16m(p0_cand[3*16 +: 16], rob_tgt_f[3*16*AW +: 16*AW]);
+          pe8m(p0_cand[3*8 +: 8], rob_tgt_f[3*8*AW +: 8*AW]);
+        wire [P0MW-1:0] page_b4_n =
+          pe8m(p0_cand[4*8 +: 8], rob_tgt_f[4*8*AW +: 8*AW]);
+        wire [P0MW-1:0] page_b5_n =
+          pe8m(p0_cand[5*8 +: 8], rob_tgt_f[5*8*AW +: 8*AW]);
+        wire [P0MW-1:0] page_b6_n =
+          pe8m(p0_cand[6*8 +: 8], rob_tgt_f[6*8*AW +: 8*AW]);
+        wire [P0MW-1:0] page_b7_n =
+          pe8m(p0_cand[7*8 +: 8], rob_tgt_f[7*8*AW +: 8*AW]);
         wire [P0MW-1:0] page_post_n =
-          pe16m(base_cand & post_mask, base_tgt);
+          pe8m(base_cand & post_mask, base_tgt);
         wire [P0MW-1:0] page_pre_n =
-          pe16m(base_cand & ~post_mask, base_tgt);
+          pe8m(base_cand & ~post_mask, base_tgt);
 
         wire [P0MW-1:0] pec_b0_n =
-          pe16m(p0_crit[0*16 +: 16], rob_tgt_f[0*16*AW +: 16*AW]);
+          pe8m(p0_crit[0*8 +: 8], rob_tgt_f[0*8*AW +: 8*AW]);
         wire [P0MW-1:0] pec_b1_n =
-          pe16m(p0_crit[1*16 +: 16], rob_tgt_f[1*16*AW +: 16*AW]);
+          pe8m(p0_crit[1*8 +: 8], rob_tgt_f[1*8*AW +: 8*AW]);
         wire [P0MW-1:0] pec_b2_n =
-          pe16m(p0_crit[2*16 +: 16], rob_tgt_f[2*16*AW +: 16*AW]);
+          pe8m(p0_crit[2*8 +: 8], rob_tgt_f[2*8*AW +: 8*AW]);
         wire [P0MW-1:0] pec_b3_n =
-          pe16m(p0_crit[3*16 +: 16], rob_tgt_f[3*16*AW +: 16*AW]);
+          pe8m(p0_crit[3*8 +: 8], rob_tgt_f[3*8*AW +: 8*AW]);
+        wire [P0MW-1:0] pec_b4_n =
+          pe8m(p0_crit[4*8 +: 8], rob_tgt_f[4*8*AW +: 8*AW]);
+        wire [P0MW-1:0] pec_b5_n =
+          pe8m(p0_crit[5*8 +: 8], rob_tgt_f[5*8*AW +: 8*AW]);
+        wire [P0MW-1:0] pec_b6_n =
+          pe8m(p0_crit[6*8 +: 8], rob_tgt_f[6*8*AW +: 8*AW]);
+        wire [P0MW-1:0] pec_b7_n =
+          pe8m(p0_crit[7*8 +: 8], rob_tgt_f[7*8*AW +: 8*AW]);
         wire [P0MW-1:0] pec_post_n =
-          pe16m(base_crit & post_mask, base_tgt);
+          pe8m(base_crit & post_mask, base_tgt);
         wire [P0MW-1:0] pec_pre_n =
-          pe16m(base_crit & ~post_mask, base_tgt);
+          pe8m(base_crit & ~post_mask, base_tgt);
 
         always @(posedge clk) begin
           page_b0_q   <= page_b0_n;
           page_b1_q   <= page_b1_n;
           page_b2_q   <= page_b2_n;
           page_b3_q   <= page_b3_n;
+          page_b4_q   <= page_b4_n;
+          page_b5_q   <= page_b5_n;
+          page_b6_q   <= page_b6_n;
+          page_b7_q   <= page_b7_n;
           page_post_q <= page_post_n;
           page_pre_q  <= page_pre_n;
           pec_b0_q    <= pec_b0_n;
           pec_b1_q    <= pec_b1_n;
           pec_b2_q    <= pec_b2_n;
           pec_b3_q    <= pec_b3_n;
+          pec_b4_q    <= pec_b4_n;
+          pec_b5_q    <= pec_b5_n;
+          pec_b6_q    <= pec_b6_n;
+          pec_b7_q    <= pec_b7_n;
           pec_post_q  <= pec_post_n;
           pec_pre_q   <= pec_pre_n;
-          page_head_q <= page_post_n[4]
-                         && (page_post_n[3:0] == rbase[3:0]);
+          page_head_q <= page_post_n[3]
+                         && (page_post_n[2:0] == rbase[2:0]);
         end
 
         // P1 first selects a narrow one-hot control, then muxes payload in a
         // balanced tree. The only stale entry possible is this class's prior
         // registered pick.
         wire stale_v = pk_v_int[gf];
-        wire page_post_v = page_post_q[4]
+        wire page_post_v = page_post_q[3]
           && !(stale_v
-               && (pk_idx_q[gf] == {p0_base_q, page_post_q[3:0]}));
-        wire page_pre_v = page_pre_q[4]
+               && (pk_idx_q[gf] == {p0_base_q, page_post_q[2:0]}));
+        wire page_pre_v = page_pre_q[3]
           && !(stale_v
-               && (pk_idx_q[gf] == {p0_base_q, page_pre_q[3:0]}));
-        wire [3:0] page_bank_v = {
-          page_b3_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd3, page_b3_q[3:0]})),
-          page_b2_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd2, page_b2_q[3:0]})),
-          page_b1_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd1, page_b1_q[3:0]})),
-          page_b0_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd0, page_b0_q[3:0]}))
+               && (pk_idx_q[gf] == {p0_base_q, page_pre_q[2:0]}));
+        wire [7:0] page_bank_v = {
+          page_b7_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd7, page_b7_q[2:0]})),
+          page_b6_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd6, page_b6_q[2:0]})),
+          page_b5_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd5, page_b5_q[2:0]})),
+          page_b4_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd4, page_b4_q[2:0]})),
+          page_b3_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd3, page_b3_q[2:0]})),
+          page_b2_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd2, page_b2_q[2:0]})),
+          page_b1_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd1, page_b1_q[2:0]})),
+          page_b0_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd0, page_b0_q[2:0]}))
         };
-        wire pec_post_v = pec_post_q[4]
+        wire pec_post_v = pec_post_q[3]
           && !(stale_v
-               && (pk_idx_q[gf] == {p0_base_q, pec_post_q[3:0]}));
-        wire pec_pre_v = pec_pre_q[4]
+               && (pk_idx_q[gf] == {p0_base_q, pec_post_q[2:0]}));
+        wire pec_pre_v = pec_pre_q[3]
           && !(stale_v
-               && (pk_idx_q[gf] == {p0_base_q, pec_pre_q[3:0]}));
-        wire [3:0] pec_bank_v = {
-          pec_b3_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd3, pec_b3_q[3:0]})),
-          pec_b2_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd2, pec_b2_q[3:0]})),
-          pec_b1_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd1, pec_b1_q[3:0]})),
-          pec_b0_q[4] && !(stale_v
-            && (pk_idx_q[gf] == {2'd0, pec_b0_q[3:0]}))
+               && (pk_idx_q[gf] == {p0_base_q, pec_pre_q[2:0]}));
+        wire [7:0] pec_bank_v = {
+          pec_b7_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd7, pec_b7_q[2:0]})),
+          pec_b6_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd6, pec_b6_q[2:0]})),
+          pec_b5_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd5, pec_b5_q[2:0]})),
+          pec_b4_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd4, pec_b4_q[2:0]})),
+          pec_b3_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd3, pec_b3_q[2:0]})),
+          pec_b2_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd2, pec_b2_q[2:0]})),
+          pec_b1_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd1, pec_b1_q[2:0]})),
+          pec_b0_q[3] && !(stale_v
+            && (pk_idx_q[gf] == {3'd0, pec_b0_q[2:0]}))
         };
 
-        wire [5:0] page_sel = pe4sel(page_post_v, page_pre_v,
+        wire [9:0] page_sel = pe8sel(page_post_v, page_pre_v,
                                       page_bank_v, p0_base_q);
-        wire [5:0] pec_sel = pe4sel(pec_post_v, pec_pre_v,
+        wire [9:0] pec_sel = pe8sel(pec_post_v, pec_pre_v,
                                     pec_bank_v, p0_base_q);
-        wire [P0MW-1:0] page_m = mux6m(page_post_q, page_pre_q,
-                                       page_b0_q, page_b1_q,
-                                       page_b2_q, page_b3_q, page_sel);
-        wire [P0MW-1:0] pec_m = mux6m(pec_post_q, pec_pre_q,
-                                      pec_b0_q, pec_b1_q,
-                                      pec_b2_q, pec_b3_q, pec_sel);
-        wire [1:0] page_group = group6(page_sel, p0_base_q);
-        wire [1:0] pec_group = group6(pec_sel, p0_base_q);
+        wire [P0MW-1:0] page_m = mux10m(page_post_q, page_pre_q,
+                                        page_b0_q, page_b1_q,
+                                        page_b2_q, page_b3_q,
+                                        page_b4_q, page_b5_q,
+                                        page_b6_q, page_b7_q, page_sel);
+        wire [P0MW-1:0] pec_m = mux10m(pec_post_q, pec_pre_q,
+                                       pec_b0_q, pec_b1_q,
+                                       pec_b2_q, pec_b3_q,
+                                       pec_b4_q, pec_b5_q,
+                                       pec_b6_q, pec_b7_q, pec_sel);
+        wire [2:0] page_bank = bank10(page_sel, p0_base_q);
+        wire [2:0] pec_bank = bank10(pec_sel, p0_base_q);
         wire             page_head_live = page_head_q && page_post_v;
-        wire             use_crit = pec_m[4] && !page_head_live;
+        wire             use_crit = pec_m[3] && !page_head_live;
         wire [P0MW-1:0] sel_m = use_crit ? pec_m : page_m;
-        wire [1:0] sel_group = use_crit ? pec_group : page_group;
-        wire [7:0] sel_leaf_oh = sel_m[AW+12:AW+5];
-        wire [15:0] sel_local16 = sel_m[3]
-                                  ? {sel_leaf_oh, 8'b0}
-                                  : {8'b0, sel_leaf_oh};
+        wire [2:0] sel_bank = use_crit ? pec_bank : page_bank;
+        wire [7:0] sel_leaf_oh = sel_m[AW+11:AW+4];
         reg [D-1:0] sel_phys_oh;
         always @* begin
           sel_phys_oh = {D{1'b0}};
-          if (p0_ready_q && sel_m[4]) begin
-            case (sel_group)
-              2'd0: sel_phys_oh[0*16 +: 16] = sel_local16;
-              2'd1: sel_phys_oh[1*16 +: 16] = sel_local16;
-              2'd2: sel_phys_oh[2*16 +: 16] = sel_local16;
-              default: sel_phys_oh[3*16 +: 16] = sel_local16;
+          if (p0_ready_q && sel_m[3]) begin
+            case (sel_bank)
+              3'd0: sel_phys_oh[0*8 +: 8] = sel_leaf_oh;
+              3'd1: sel_phys_oh[1*8 +: 8] = sel_leaf_oh;
+              3'd2: sel_phys_oh[2*8 +: 8] = sel_leaf_oh;
+              3'd3: sel_phys_oh[3*8 +: 8] = sel_leaf_oh;
+              3'd4: sel_phys_oh[4*8 +: 8] = sel_leaf_oh;
+              3'd5: sel_phys_oh[5*8 +: 8] = sel_leaf_oh;
+              3'd6: sel_phys_oh[6*8 +: 8] = sel_leaf_oh;
+              default: sel_phys_oh[7*8 +: 8] = sel_leaf_oh;
             endcase
           end
         end
 
-        assign fnd_raw[gf] = p0_ready_q && sel_m[4];
-        assign sel_idx[gf] = {sel_group, sel_m[3:0]};
-        assign sel_tgt[gf] = sel_m[AW+4:5];
+        assign fnd_raw[gf] = p0_ready_q && sel_m[3];
+        assign sel_idx[gf] = {sel_bank, sel_m[2:0]};
+        assign sel_tgt[gf] = sel_m[AW+3:4];
         assign sel_oh[gf] = sel_phys_oh;
         assign sel_bank_oh[gf] = fnd_raw[gf]
                                  ? (8'b1 << sel_idx[gf][5:3]) : 8'b0;

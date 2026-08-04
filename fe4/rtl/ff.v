@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v29
-// Experiment   : E030-P16
+// RTL revision : 4FE-safe-v29-8x8-ab
+// Experiment   : AB-P8
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : pipeline the safe picker between 4x16 local and global select
+// Changes      : pipeline the safe picker between 8x8 local and global select
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
