@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v26
+// Experiment   : E027-B1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : balance safe-picker target muxes and picked-result OR tree
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -64,6 +64,49 @@ module ff_pick #(
       pe8h = 12'b0;
       for (i = 7; i >= 0; i = i - 1)
         if (v[i]) pe8h = {(8'b1 << i), 1'b1, i[2:0]};
+    end
+  endfunction
+
+  // Explicit three-level one-hot mux trees.  The selected inputs are already
+  // mutually exclusive; spelling out the balanced reduction prevents a
+  // procedural accumulator from becoming a serial chain in synthesis.
+  function [AW-1:0] mux8oh_aw;
+    input [8*AW-1:0] data_f;
+    input [7:0]      sel_oh;
+    reg [AW-1:0] p0, p1, p2, p3;
+    reg [AW-1:0] q0, q1;
+    begin
+      p0 = (data_f[0*AW +: AW] & {AW{sel_oh[0]}})
+         | (data_f[1*AW +: AW] & {AW{sel_oh[1]}});
+      p1 = (data_f[2*AW +: AW] & {AW{sel_oh[2]}})
+         | (data_f[3*AW +: AW] & {AW{sel_oh[3]}});
+      p2 = (data_f[4*AW +: AW] & {AW{sel_oh[4]}})
+         | (data_f[5*AW +: AW] & {AW{sel_oh[5]}});
+      p3 = (data_f[6*AW +: AW] & {AW{sel_oh[6]}})
+         | (data_f[7*AW +: AW] & {AW{sel_oh[7]}});
+      q0 = p0 | p1;
+      q1 = p2 | p3;
+      mux8oh_aw = q0 | q1;
+    end
+  endfunction
+
+  function [11:0] mux8oh12;
+    input [95:0] data_f;
+    input [7:0]  sel_oh;
+    reg [11:0] p0, p1, p2, p3;
+    reg [11:0] q0, q1;
+    begin
+      p0 = (data_f[0*12 +: 12] & {12{sel_oh[0]}})
+         | (data_f[1*12 +: 12] & {12{sel_oh[1]}});
+      p1 = (data_f[2*12 +: 12] & {12{sel_oh[2]}})
+         | (data_f[3*12 +: 12] & {12{sel_oh[3]}});
+      p2 = (data_f[4*12 +: 12] & {12{sel_oh[4]}})
+         | (data_f[5*12 +: 12] & {12{sel_oh[5]}});
+      p3 = (data_f[6*12 +: 12] & {12{sel_oh[6]}})
+         | (data_f[7*12 +: 12] & {12{sel_oh[7]}});
+      q0 = p0 | p1;
+      q1 = p2 | p3;
+      mux8oh12 = q0 | q1;
     end
   endfunction
 
@@ -221,7 +264,7 @@ module ff_pick #(
     input [D-1:0]  v;
     input [AW-1:0] base;
     input [D*AW-1:0] tgt_f;
-    integer b, l;
+    integer b;
     reg [95:0] bank_h_f;
     reg [8*AW-1:0] bank_tgt_f;
     reg [7:0]  bank_v;
@@ -241,10 +284,9 @@ module ff_pick #(
       for (b = 0; b < 8; b = b + 1) begin
         bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
         bank_v[b] = bank_h_f[b*12+3];
-        for (l = 0; l < 8; l = l + 1)
-          bank_tgt_f[b*AW +: AW] = bank_tgt_f[b*AW +: AW]
-            | (tgt_f[(b*8+l)*AW +: AW]
-               & {AW{bank_h_f[b*12+4+l]}});
+        bank_tgt_f[b*AW +: AW] = mux8oh_aw(
+          tgt_f[b*8*AW +: 8*AW], bank_h_f[b*12+4 +: 8]
+        );
       end
 
       base_bank = base[5:3];
@@ -257,26 +299,18 @@ module ff_pick #(
       // critical override does not wait for the full 64-entry page index and
       // does not infer the separate cand[rbase] 64-to-1 mux tried in E015.
       head_present = post_h[4 + base[2:0]];
-      post_tgt  = {AW{1'b0}};
-      pre_tgt   = {AW{1'b0}};
-      for (l = 0; l < 8; l = l + 1) begin
-        post_tgt = post_tgt
-          | (tgt_f[(base_bank*8+l)*AW +: AW] & {AW{post_h[4+l]}});
-        pre_tgt = pre_tgt
-          | (tgt_f[(base_bank*8+l)*AW +: AW] & {AW{pre_h[4+l]}});
-      end
+      post_tgt = mux8oh_aw(
+        tgt_f[base_bank*8*AW +: 8*AW], post_h[11:4]
+      );
+      pre_tgt = mux8oh_aw(
+        tgt_f[base_bank*8*AW +: 8*AW], pre_h[11:4]
+      );
 
       bank_sel_h  = pebank_after(bank_v, base_bank);
       other_bank  = bank_sel_h[10:8];
       other_bank_oh = bank_sel_h[7:0];
-      local_h     = 12'b0;
-      other_tgt   = {AW{1'b0}};
-      for (b = 0; b < 8; b = b + 1) begin
-        local_h = local_h
-          | (bank_h_f[b*12 +: 12] & {12{other_bank_oh[b]}});
-        other_tgt = other_tgt
-          | (bank_tgt_f[b*AW +: AW] & {AW{other_bank_oh[b]}});
-      end
+      local_h   = mux8oh12(bank_h_f, other_bank_oh);
+      other_tgt = mux8oh_aw(bank_tgt_f, other_bank_oh);
 
       result_oh  = {D{1'b0}};
       result_bank_oh = 8'b0;
@@ -615,11 +649,15 @@ module ff_pick #(
   reg [D-1:0] picked_n;
   generate
     if (DUAL_STEAL == 0) begin : g_safe_picked
-      integer pf;
+      reg [D-1:0] picked_01, picked_23;
       always @* begin
-        picked_n = {D{1'b0}};
-        for (pf = 0; pf < NFE; pf = pf + 1)
-          if (pk_v_n[pf]) picked_n = picked_n | sel_oh[pf];
+        // The integrated design has four FEs.  Pairwise reduction keeps the
+        // exact safe-profile bitmap while limiting this merge to two OR levels.
+        picked_01 = (sel_oh[0] & {D{pk_v_n[0]}})
+                  | (sel_oh[1] & {D{pk_v_n[1]}});
+        picked_23 = (sel_oh[2] & {D{pk_v_n[2]}})
+                  | (sel_oh[3] & {D{pk_v_n[3]}});
+        picked_n = picked_01 | picked_23;
       end
     end else begin : g_dual_picked
       integer pf;
