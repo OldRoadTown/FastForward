@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v27
+// Experiment   : E028-V1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : compute fast bank/post/pre valid signals beside local payloads
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -64,6 +64,25 @@ module ff_pick #(
       pe8h = 12'b0;
       for (i = 7; i >= 0; i = i - 1)
         if (v[i]) pe8h = {(8'b1 << i), 1'b1, i[2:0]};
+    end
+  endfunction
+
+  // Fast presence sideband for the safe selector.  The local PE still builds
+  // index/one-hot payloads in parallel, but bank arbitration no longer waits
+  // for the valid bit embedded in that wider priority result.  The explicit
+  // tree fixes this control reduction at three two-input OR levels.
+  function or8_bal;
+    input [7:0] v;
+    reg p0, p1, p2, p3;
+    reg q0, q1;
+    begin
+      p0 = v[0] | v[1];
+      p1 = v[2] | v[3];
+      p2 = v[4] | v[5];
+      p3 = v[6] | v[7];
+      q0 = p0 | p1;
+      q1 = p2 | p3;
+      or8_bal = q0 | q1;
     end
   endfunction
 
@@ -233,6 +252,7 @@ module ff_pick #(
     reg [D-1:0]  result_oh;
     reg [7:0]    result_bank_oh, result_local_oh;
     reg [AW-1:0] result_idx;
+    reg          post_v, pre_v;
     reg          result_v, head_present;
     begin
       bank_h_f = 96'b0;
@@ -240,7 +260,7 @@ module ff_pick #(
       bank_v   = 8'b0;
       for (b = 0; b < 8; b = b + 1) begin
         bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
-        bank_v[b] = bank_h_f[b*12+3];
+        bank_v[b] = or8_bal(v[b*8 +: 8]);
         for (l = 0; l < 8; l = l + 1)
           bank_tgt_f[b*AW +: AW] = bank_tgt_f[b*AW +: AW]
             | (tgt_f[(b*8+l)*AW +: AW]
@@ -252,6 +272,8 @@ module ff_pick #(
       post_mask = 8'hff << base[2:0];
       post_h    = pe8h(base_bits & post_mask);
       pre_h     = pe8h(base_bits & ~post_mask);
+      post_v    = or8_bal(base_bits & post_mask);
+      pre_v     = or8_bal(base_bits & ~post_mask);
       // The post-base local PE selects rbase itself exactly when the window
       // head is a candidate.  Export that already-computed fact so the safe
       // critical override does not wait for the full 64-entry page index and
@@ -284,7 +306,7 @@ module ff_pick #(
       result_tgt = {AW{1'b0}};
       result_idx = {AW{1'b0}};
       result_v   = 1'b0;
-      if (post_h[3]) begin
+      if (post_v) begin
         result_v   = 1'b1;
         result_idx = {base_bank, post_h[2:0]};
         result_tgt = post_tgt;
@@ -302,7 +324,7 @@ module ff_pick #(
         for (b = 0; b < 8; b = b + 1)
           result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
                                  & {8{other_bank_oh[b]}};
-      end else if (pre_h[3]) begin
+      end else if (pre_v) begin
         result_v   = 1'b1;
         result_idx = {base_bank, pre_h[2:0]};
         result_tgt = pre_tgt;
