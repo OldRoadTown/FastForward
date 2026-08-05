@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v21
+// Experiment   : E033-M1
+// Based on     : E021-N1 / 4FE-safe-v20
+// Changes      : remove aggregate picked feedback from each safe selector
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -74,6 +74,21 @@ module ff_pick #(
     begin
       t = {v, v} >> s;
       rotr8 = t[7:0];
+    end
+  endfunction
+
+  // Rebuild a physical one-hot from the hierarchy coordinates already
+  // registered for the I1 packet-data read.  Safe mode binds FE gf to latency
+  // class gf, so only that FE's previous pick can overlap its next candidate
+  // set.  This keeps the aggregate ROB commit bitmap out of the selector cone.
+  function [D-1:0] expand_hier_oh;
+    input [7:0] bank_oh;
+    input [7:0] local_oh;
+    integer b;
+    begin
+      expand_hier_oh = {D{1'b0}};
+      for (b = 0; b < 8; b = b + 1)
+        expand_hier_oh[b*8 +: 8] = local_oh & {8{bank_oh[b]}};
     end
   endfunction
 
@@ -388,13 +403,25 @@ module ff_pick #(
   genvar gf;
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_pick
-      reg [D-1:0] cand;
-      integer ce;
-      always @* begin
-        for (ce = 0; ce < D; ce = ce + 1)
-          cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
-      end
       if (DUAL_STEAL == 0) begin : g_safe
+        // The aggregate picked_q bitmap is exported only to the ROB in this
+        // profile.  Reconstructing the single previous pick for this class
+        // removes picked_q -> candidate -> selector feedback and avoids a new
+        // register or a duplicate 64-bit commit bitmap.
+        wire [D-1:0] picked_same_class =
+          expand_hier_oh(pk_bank_oh_q[gf], pk_local_oh_q[gf])
+          & {D{pk_v_int[gf]}};
+        wire [D-1:0] safe_rdy_eff =
+          (rdy_q & ~picked_same_class)
+          | (WAKE_BYPASS ? wake_now : {D{1'b0}});
+        reg [D-1:0] cand;
+        integer ce;
+        always @* begin
+          for (ce = 0; ce < D; ce = ce + 1)
+            cand[ce] = safe_rdy_eff[ce]
+                       & (rob_lat[ce] == gf[1:0]);
+        end
+
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
         // use it directly instead of decoding pk_idx_n back to 64 bits.
@@ -422,6 +449,13 @@ module ff_pick #(
         assign sec_fnd[gf] = 1'b0;
         assign sec_sel[gf] = {AW{1'b0}};
       end else begin : g_dual
+        reg [D-1:0] cand;
+        integer ce;
+        always @* begin
+          for (ce = 0; ce < D; ce = ce + 1)
+            cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
+        end
+
         // Dual/full profiles retain two parity candidates for work stealing.
         wire [AW:0]  pee  = peH(cand & mask_age_even, rbase);
         wire [AW:0]  peo  = peH(cand & ~mask_age_even, rbase);
