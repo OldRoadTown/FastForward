@@ -134,6 +134,30 @@
   若标准 cycles 不一致、picker depth/cells 无收益、FE issue read 路径
   恶化，或内网仍出现 aggregate `picked_q -> picker`，则直接拒绝。
 
+## E033-M1 本地筛选
+
+- 被测 RTL：`226295f6c6e317e5c75833a4268b0f1e3014d2a3`。只修改
+  `ff_pick.v` 的 safe candidate mask，`ff.v` 仅更新版本头；没有新增
+  寄存器、接口或流水级，综合/仿真周期配置保持与 E021 相同。
+- Verilator lint 通过。四个 20000-packet 基准与精确 E021 逐项一致：
+  heavy `6154`、mid `9932`、sparse `25024`、dep-heavy `11291` cycles，
+  对应的 BKPR 统计也完全一致。
+- 另跑 20 组 safe 随机负载/依赖对照和 12 组 dual/full 对照，所有用例
+  均通过，cycles 与 BKPR 逐项零差异。dual/full 在 elaboration 时仍使用
+  E021 aggregate mask，E033 的 local mask 只存在于 `DUAL_STEAL=0`。
+- 通用 Yosys picker：E021 `36681 cells / depth 42`，E033
+  `37374 cells / depth 41`，即 `+693 cells`（`+1.89%`）、深度 `-1`；
+  最长路径起点由 `picked_q` 转为 `pk_v_int`，说明目标反馈换源已生效。
+- 通用 Yosys 全设计：E021 `481560 cells / depth 80`，E033
+  `482504 cells / depth 79`，即 `+944 cells`（`+0.196%`）、深度 `-1`。
+  该映射只用于候选筛选，不代替 DCG 的库、布线、ICG、面积和功耗结果。
+- 结论：送内网独立综合，不与已拒绝的 E031/E032 叠加，也暂不调整
+  `bes_cfg.csh`。通过条件是原 aggregate
+  `picked_q -> picker -> pk_tgt_q/pk_idx_q/picked_q` 路径消失，且同约束
+  WNS/总分收益足以覆盖面积和可能的功耗增加。需特别检查新出现的
+  `pk_v_int/pk_bank_oh_q/pk_local_oh_q -> picker` 路径以及这些寄存器新增
+  负载是否恶化 `ff_issue` 数据读取；不能用未经测量的 Arrival 阈值判定。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
@@ -159,6 +183,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E031-R64 | `aa33b5f6284e7f65fde048e6a9cba9d333d4fb80` | E021 + ROB fixed-order | 6154 | 9932 | 25024 | 0.2871 | 0.4645 | -0.1774 | 31133 | — | — | — | 拒绝：10363 条违例；worst `rdy_q -> pick/sel_tgt -> pk_tgt_q`；另有 `sched_idx_q -> res_now -> egress/lane_d_f` -0.1769 ns；clock-gating 改善到 -0.0256 ns，但相对 E021 WNS 恶化 9.0 ps、面积 +77、违例 +9；dep-heavy 11291 cycles，与 E021 四项完全一致；旧/new `peH` 等价检查通过 |
 | E032-C1 | `5e5e3220df6dd9b9e88203817d36b543f2e5794d` | E021 + registered class-ready | 6154 | 9932 | 25024 | — | — | ≈-0.20 | — | — | — | — | 拒绝：内网 WNS 约 -0.20 ns，转为 `picked_q -> picker -> pk_tgt_q` 同组反馈路径；精确 required/arrival、面积和违例数待补；dep-heavy 11291，与 E021 四项完全一致；20 组 safe 和 12 组 full 随机负载逐项同周期；picker 通用 cells -2.23%，但全设计通用 cells +0.240% |
+| E033-M1 | `226295f6c6e317e5c75833a4268b0f1e3014d2a3` | E021 + per-class previous-pick mask | 6154 | 9932 | 25024 | — | — | — | — | — | — | — | 待内网综合：safe picker 不再读取 aggregate `picked_q`；dep-heavy 11291，20 组 safe 与 12 组 dual/full 对照均和 E021 同周期；通用 picker cells +1.89%、depth 42→41，全设计 cells +0.196%、depth 80→79 |
 
 ## 分支与提交约定
 
@@ -177,5 +202,8 @@
 - `timing/4fe-rdy-class-v31`：从 E021 精确 RTL 创建，只把 ready 状态
   按 latency class 寄存到 ROB/picker 边界；不包含 E031 ROB selector 或
   egress 修改，内网结果确认前不与其它候选合并。
+- `timing/4fe-local-pick-mask-v32`：从 E021 精确 RTL 创建，只在 safe
+  picker 中使用已有 per-FE hierarchy coordinates 屏蔽本 class 上拍 pick；
+  aggregate `picked_q` 保留给 ROB，分支不包含 E031/E032 RTL。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
