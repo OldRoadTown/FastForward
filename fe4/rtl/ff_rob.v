@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v8
-// Experiment   : E009
-// Based on     : 4FE-safe-v7 / E008
-// Changes      : direct oldest-unissued next pointer; remove advance add chain
+// RTL revision : 4FE-safe-v31
+// Experiment   : E032-C1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : register ready state as four latency-class bitmaps
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -48,7 +48,7 @@ module ff_rob #(
   output wire [D-1:0]        res_pred_o,
   output wire [D-1:0]        res_known_o,   // resv | res_now | res_pred
   output wire [D-1:0]        wake_now_o,
-  output wire [D-1:0]        rdy_o,
+  output wire [NFE*D-1:0]    rdy_class_f,
   output wire [D-1:0]        crit_o,
   output wire [D-1:0]        resv_o,
   output wire [D-1:0]        outp_o,
@@ -174,7 +174,9 @@ module ff_rob #(
   reg          rob_isdep [0:D-1];
 
   reg [D-1:0]  crit_q;                  // some dependent is waiting on this
-  reg [D-1:0]  rdy_q;                   // ready, not yet picked
+  // Ready state is predecoded by latency class at the register boundary.
+  // This removes the ready-bit four-class fanout and class compare from I0.
+  reg [D-1:0]  rdy_class_q [0:NFE-1];
   reg [D-1:0]  wtg_q;                   // waiting for dependency result
   reg [D-1:0]  iss_q;                   // picked/issued
   reg [D-1:0]  resv_q;                  // result present (retained after pop)
@@ -201,7 +203,7 @@ module ff_rob #(
   // pre-wake: target result arrives next cycle -> dependent can enter the FE
   // in the same cycle the result shows up on FEOUT (dp taken from the bus)
   reg [D-1:0] wake_now;
-  integer e;
+  integer e, rc;
   always @* begin
     for (e = 0; e < D; e = e + 1)
       wake_now[e] = wtg_q[e] & res_pred_r[rob_tgt[e]];
@@ -281,7 +283,8 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      rdy_q       <= {D{1'b0}};
+      for (rc = 0; rc < NFE; rc = rc + 1)
+        rdy_class_q[rc] <= {D{1'b0}};
       wtg_q       <= {D{1'b0}};
       iss_q       <= {D{1'b0}};
       resv_q      <= {D{1'b0}};
@@ -291,16 +294,20 @@ module ff_rob #(
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
-          rdy_q[e]  <= slot_rdy[e[1:0]];
+          for (rc = 0; rc < NFE; rc = rc + 1)
+            rdy_class_q[rc][e] <= slot_rdy[e[1:0]]
+                                      && (slot_lat[e[1:0]] == rc[1:0]);
           wtg_q[e]  <= slot_wtg[e[1:0]];
           iss_q[e]  <= 1'b0;
           resv_q[e] <= 1'b0;
         end else begin
           if (picked[e]) begin
-            rdy_q[e] <= 1'b0;
+            for (rc = 0; rc < NFE; rc = rc + 1)
+              rdy_class_q[rc][e] <= 1'b0;
             iss_q[e] <= 1'b1;
           end else if (wake_now[e]) begin
-            rdy_q[e] <= 1'b1;
+            for (rc = 0; rc < NFE; rc = rc + 1)
+              rdy_class_q[rc][e] <= (rob_lat[e] == rc[1:0]);
           end
           if (wake_now[e])  wtg_q[e]  <= 1'b0;
           if (res_now_r[e]) resv_q[e] <= 1'b1;
@@ -336,13 +343,15 @@ module ff_rob #(
       assign rob_tgt_f[gi*AW +: AW]    = rob_tgt[gi];
       assign rob_isdep_o[gi]           = rob_isdep[gi];
     end
+    for (gi = 0; gi < NFE; gi = gi + 1) begin : g_rc
+      assign rdy_class_f[gi*D +: D] = rdy_class_q[gi];
+    end
   endgenerate
 
   assign res_now_o   = res_now_r;
   assign res_pred_o  = res_pred_r;
   assign res_known_o = resv_q | res_now_r | res_pred_r;
   assign wake_now_o  = wake_now;
-  assign rdy_o       = rdy_q;
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
   assign outp_o      = outp_q;

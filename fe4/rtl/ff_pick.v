@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v31
+// Experiment   : E032-C1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : consume ROB-registered latency-class ready bitmaps
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -27,7 +27,7 @@ module ff_pick #(
 )(
   input  wire                clk,
   input  wire                rst_n,
-  input  wire [D-1:0]        rdy_q,
+  input  wire [NFE*D-1:0]    rdy_class_f,
   input  wire [D-1:0]        wake_now,
   input  wire [D-1:0]        crit_q,
   input  wire [D*2-1:0]      rob_lat_f,
@@ -339,6 +339,7 @@ module ff_pick #(
   // unpack
   wire [1:0]    rob_lat [0:D-1];
   wire [AW-1:0] rob_tgt [0:D-1];
+  wire [D-1:0]  rdy_class [0:NFE-1];
   wire [3:0] sched_v [0:NFE-1];
   genvar gi;
   generate
@@ -347,6 +348,7 @@ module ff_pick #(
       assign rob_tgt[gi] = rob_tgt_f[gi*AW +: AW];
     end
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_us
+      assign rdy_class[gi] = rdy_class_f[gi*D +: D];
       assign sched_v[gi] = sched_v_f[gi*4 +: 4];
     end
   endgenerate
@@ -364,12 +366,11 @@ module ff_pick #(
   // a 6-to-64 decode before feeding the next picker or ROB old_u logic.
   assign picked = picked_q;
 
-  // A registered pick is not removed from rdy_q until its issue/commit edge.
-  // The one-hot mask preserves v2 scheduling behavior; the timing reduction
-  // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
-  wire [D-1:0] rdy_avail = rdy_q & ~picked;
-  wire [D-1:0] rdy_eff   = rdy_avail
-                           | (WAKE_BYPASS ? wake_now : {D{1'b0}});
+  // A registered pick is not removed from the class-ready state until its
+  // issue/commit edge. The one-hot mask preserves v2 scheduling behavior.
+  wire [D-1:0] rdy_any = rdy_class[0] | rdy_class[1]
+                       | rdy_class[2] | rdy_class[3];
+  wire [D-1:0] rdy_avail = rdy_any & ~picked;
   localparam [D-1:0] MASK_PHYS_EVEN = {32{2'b01}};
   wire [D-1:0] mask_age_even = rbase[0] ? ~MASK_PHYS_EVEN : MASK_PHYS_EVEN;
 
@@ -392,7 +393,9 @@ module ff_pick #(
       integer ce;
       always @* begin
         for (ce = 0; ce < D; ce = ce + 1)
-          cand[ce] = rdy_eff[ce] & (rob_lat[ce] == gf[1:0]);
+          cand[ce] = (rdy_class[gf][ce] & ~picked[ce])
+                   | (WAKE_BYPASS && wake_now[ce]
+                      && (rob_lat[ce] == gf[1:0]));
       end
       if (DUAL_STEAL == 0) begin : g_safe
         // The safe profile consumes only the primary candidate.  Preserve the

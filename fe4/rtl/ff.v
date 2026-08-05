@@ -1,12 +1,12 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v31
+// Experiment   : E032-C1
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : predecode ready state by latency class at the ROB boundary
 //
-// Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
+// Score-driven design: score = 1 / (T^4 * Power * Area), T = period * cycles.
 //
 // Fixed integration contract: ff exposes only PKTIN, PKTOUT, and BKPR.  FEIN
 // and FEOUT stay internal; the top instantiates four forwarding engines.
@@ -108,7 +108,8 @@ module ff #(
   wire [4*AW-1:0]     k_tgt_f;
 
   wire [D-1:0]        res_now, res_pred, res_known, wake_now;
-  wire [D-1:0]        rdy_q, crit_q, resv_q, outp_q, rob_isdep;
+  wire [D-1:0]        crit_q, resv_q, outp_q, rob_isdep;
+  wire [NFE*D-1:0]    rdy_class_f;
   wire [D*128-1:0]    rob_data_f;
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
@@ -165,7 +166,7 @@ module ff #(
     .picked(picked), .rob_src_f(rob_src_f),
     .pop_oh(pop_oh), .pop_cnt(pop_cnt),
     .res_now_o(res_now), .res_pred_o(res_pred), .res_known_o(res_known),
-    .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
+    .wake_now_o(wake_now), .rdy_class_f(rdy_class_f), .crit_o(crit_q),
     .resv_o(resv_q), .outp_o(outp_q),
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
@@ -177,7 +178,7 @@ module ff #(
             .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
             .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
-    .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
+    .rdy_class_f(rdy_class_f), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
