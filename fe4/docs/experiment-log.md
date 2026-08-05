@@ -66,6 +66,33 @@
   picker/egress 主路径，不能视为总时序优化。后续候选必须从 E021 的
   精确 SHA 单独建分支，不允许在 E031-R64 上继续叠加。
 
+## E032-C1 实施前查重
+
+- 基线：E021 `c30a55d9d21faea805f500ddc8497ed70322ed15`；分支
+  `timing/4fe-rdy-class-v31` 只携带实验规则和结果文档，不包含
+  E031-R64 的 ROB RTL 修改。
+- 全部既有 picker 版本都在 picker 内从 `rdy_q & (rob_lat == class)`
+  生成四个 class candidate。`1df54843cc2c8308aa090c241db8086ec9a17a28`
+  的 fast-bank-valid 和 `2d7556cdc5cc2e0db0b6d4dc59cc55b8bde48965`
+  的 balanced mux/OR 均优化该 candidate 之后的逻辑，没有降低
+  `rdy_q` 的四 class 扇出或移除 class compare。
+- `aaa144eef8ace9395532d248faaad2f12237f432`、
+  `bf364afc3ea874c0d93fafd4d5b080fedc551923` 分别尝试 4x16 hierarchy
+  和六 bank 扫描，仍由同一组合 candidate 驱动；`ab82ae63ed11a2bac4aca49b96754e910d6cf5c0`
+  和 `d9752e644aab6ce8b9bbedd574addec87d8d1712` 增加 picker 流水级，已知
+  会增加重载和 dependency-heavy cycles，不与本候选等价。
+- 本候选在 ROB 状态边界寄存四组 latency-class ready bitmap，直接
+  替代 picker safe path 中的 `rdy_q -> class compare`。不增加流水级，
+  不修改 oldest/critical-first 选择语义；保留 `rob_lat` 供 waiting wake
+  和非 safe 配置使用。预计净增加 192 个状态位。
+- 目标是同时缩短 E031 报告中的 `sel_tgt`、`pk_idx_n`、`picked_n` 和
+  `sel_local_oh` 四组共享路径。egress/forward 不在本实验中修改，以便
+  单独归因；picker 改善后允许 WNS 转移到已知约 `-0.17 ns` 的 egress
+  路径。
+- 任一标准 workload cycles 与 E021 不同即拒绝；若通用综合没有降低
+  picker 逻辑深度，或内网 WNS 收益不足以覆盖面积/功耗增加，也拒绝且
+  不进入组合版本。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
