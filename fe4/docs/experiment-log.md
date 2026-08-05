@@ -22,6 +22,25 @@
    `score = 1 / (T^4 × Power × Area)`。
 8. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
 
+## E031-R64 实施前查重
+
+- 基线：E021 `c30a55d9d21faea805f500ddc8497ed70322ed15`，保持
+  64-entry ROB、接口、BKPR 阈值和流水级不变。
+- `489c76a2175aaafec2545f1c854e57b987c0b067` 已将 ROB oldest
+  search 改为 8x8 分层结构，但仍使用 rotate、priority encode、bank
+  index add 和动态 local-bank 读取。
+- `c30a55d9d21faea805f500ddc8497ed70322ed15` 已在 picker 中使用
+  fixed-order bank selector，但没有修改 ROB 的 `peH`。
+- `3bc99500489ab67a8333db3a12b06773a47b1ffd` 在 32-entry ROB 中
+  使用过四 bank 固定 case，但同时改变容量和 BKPR，且仍动态读取
+  local bank；重载 cycles 增加 68%，不能归因到 selector。
+- 本候选只把 64-entry ROB `peH` 的跨 bank 搜索改为固定顺序，并由
+  case 分支直接返回 physical bank/local index，消除 rotate、index add
+  和动态 local-bank read，不改变可见周期语义。
+- 预期目标：缩短 `picked/old_u_q -> old_u_q.D` 及其 clock-gating cone；
+  单独运行时不承诺越过 E021 picker WNS。任一标准用例 cycles 变化即判
+  功能/性能失败；综合后若目标路径、面积或功耗无净收益则不进入组合版。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
