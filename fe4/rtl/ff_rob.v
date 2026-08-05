@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v8
-// Experiment   : E009
-// Based on     : 4FE-safe-v7 / E008
-// Changes      : direct oldest-unissued next pointer; remove advance add chain
+// RTL revision : 4FE-safe-v30
+// Experiment   : E031-R64
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : fixed-order ROB bank/local oldest-unissued selection
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -79,13 +79,145 @@ module ff_rob #(
     end
   endfunction
 
-  function [7:0] rotr8;
-    input [7:0] v;
-    input [2:0] s;
-    reg [15:0] t;
+  // Select the first non-base bank in circular order and return its local
+  // winner directly as {valid, physical_bank, local_index}. Constant bank
+  // reads keep rotate, index addition, and a dynamic local-result mux out of
+  // the oldest-unissued feedback path.
+  function [6:0] pebank_after;
+    input [31:0] bank_pe_f;
+    input [2:0]  base_bank;
     begin
-      t = {v, v} >> s;
-      rotr8 = t[7:0];
+      pebank_after = 7'b0;
+      case (base_bank)
+        3'd0: begin
+          if      (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+        end
+        3'd1: begin
+          if      (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+        end
+        3'd2: begin
+          if      (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+        end
+        3'd3: begin
+          if      (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+        end
+        3'd4: begin
+          if      (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+        end
+        3'd5: begin
+          if      (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+          else if (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+        end
+        3'd6: begin
+          if      (bank_pe_f[7*4+3]) pebank_after =
+            {1'b1, 3'd7, bank_pe_f[7*4 +: 3]};
+          else if (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+        end
+        default: begin
+          if      (bank_pe_f[0*4+3]) pebank_after =
+            {1'b1, 3'd0, bank_pe_f[0*4 +: 3]};
+          else if (bank_pe_f[1*4+3]) pebank_after =
+            {1'b1, 3'd1, bank_pe_f[1*4 +: 3]};
+          else if (bank_pe_f[2*4+3]) pebank_after =
+            {1'b1, 3'd2, bank_pe_f[2*4 +: 3]};
+          else if (bank_pe_f[3*4+3]) pebank_after =
+            {1'b1, 3'd3, bank_pe_f[3*4 +: 3]};
+          else if (bank_pe_f[4*4+3]) pebank_after =
+            {1'b1, 3'd4, bank_pe_f[4*4 +: 3]};
+          else if (bank_pe_f[5*4+3]) pebank_after =
+            {1'b1, 3'd5, bank_pe_f[5*4 +: 3]};
+          else if (bank_pe_f[6*4+3]) pebank_after =
+            {1'b1, 3'd6, bank_pe_f[6*4 +: 3]};
+        end
+      endcase
     end
   endfunction
 
@@ -97,18 +229,14 @@ module ff_rob #(
     input [AW-1:0] base;
     integer b;
     reg [31:0] bank_pe_f;
-    reg [7:0]  bank_v;
     reg [7:0]  base_bits, post_mask;
-    reg [7:0]  bank_rot;
-    reg [3:0]  post_pe, pre_pe, bank_pe, local_pe;
-    reg [2:0]  base_bank, next_bank, other_bank;
+    reg [3:0]  post_pe, pre_pe;
+    reg [2:0]  base_bank;
+    reg [6:0]  bank_sel;
     begin
       bank_pe_f = 32'b0;
-      bank_v    = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < 8; b = b + 1)
         bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
-        bank_v[b] = bank_pe_f[b*4+3];
-      end
 
       base_bank = base[5:3];
       base_bits = v[base_bank*8 +: 8];
@@ -116,17 +244,12 @@ module ff_rob #(
       post_pe   = pe8(base_bits & post_mask);
       pre_pe    = pe8(base_bits & ~post_mask);
 
-      bank_v[base_bank] = 1'b0;
-      next_bank  = base_bank + 3'd1;
-      bank_rot   = rotr8(bank_v, next_bank);
-      bank_pe    = pe8(bank_rot);
-      other_bank = bank_pe[2:0] + next_bank;
-      local_pe   = bank_pe_f[other_bank*4 +: 4];
+      bank_sel = pebank_after(bank_pe_f, base_bank);
 
       if (post_pe[3])
         peH = {1'b1, base_bank, post_pe[2:0]};
-      else if (bank_pe[3])
-        peH = {1'b1, other_bank, local_pe[2:0]};
+      else if (bank_sel[6])
+        peH = {1'b1, bank_sel[5:0]};
       else if (pre_pe[3])
         peH = {1'b1, base_bank, pre_pe[2:0]};
       else
