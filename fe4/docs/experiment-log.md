@@ -108,6 +108,32 @@
   `f8a403b231e1bc040fabdf521e1b8ff3f5493d3d` 已试过的 aggregate
   picked mask/commit 双寄存器复制。
 
+## E033-M1 实施前查重
+
+- 基线：E021 `c30a55d9d21faea805f500ddc8497ed70322ed15`；分支
+  `timing/4fe-local-pick-mask-v32` 不包含 E031/E032 RTL。
+- `f90af222172df52a535443d6aed359193d0b081e` 首次寄存 aggregate
+  `picked_q`，用 64-bit bitmap 取代 `pk_idx_q` 的 6-to-64 feedback
+  decode；E021 仍由这个 aggregate bitmap 同时驱动 ROB 和四个 class
+  candidate mask。
+- `f8a403b231e1bc040fabdf521e1b8ff3f5493d3d` 已试过两个完全相同的
+  aggregate picked 寄存器副本，分别驱动 picker mask 和 ROB commit。
+  该分支没有进入后续主线；E033 不复制 aggregate bitmap，与其不等价。
+- E021 已有每个 FE 的 registered `pk_bank_oh_q`、`pk_local_oh_q` 和
+  `pk_v_int`。在 `DUAL_STEAL=0` 的 scored safe 配置中，FE/class 固定
+  对应且 entry latency 不变，因此 class `c` 的 ready bitmap 只可能与
+  上周期 class `c` 的 pick 相交，其它 class 的 picked 位对它恒为 0。
+- E033 只在 safe generate 分支中从上述既有 hierarchy coordinates
+  重建本 class 的上周期 one-hot mask，并用它替代 aggregate `picked_q`
+  mask。aggregate `picked_q` 继续独立驱动 ROB commit/oldest look-ahead；
+  dual/full 配置继续使用原 aggregate mask，因为 stealing 会改变 FE 与
+  latency class 的对应关系。该方案不增加寄存器、接口或流水级。
+- 目标是从 safe picker candidate cone 中完全删除内网报告的
+  `picked_q -> picked -> ROB/top-level picked fanout -> picker` 起点。
+  风险是 hierarchy-coordinate decode 会增加 `pk_bank/local_oh_q` 负载；
+  若标准 cycles 不一致、picker depth/cells 无收益、FE issue read 路径
+  恶化，或内网仍出现 aggregate `picked_q -> picker`，则直接拒绝。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
