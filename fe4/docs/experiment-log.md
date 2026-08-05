@@ -17,6 +17,21 @@
    `score = 1 / (T^4 × Power × Area)`。
 6. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
 
+## 赛题时钟与评分约束
+
+- DCG 环境为 T7+、H240、ssgnp、0.675 V、125 C；时钟周期由
+  `design/hdl/bes_cfg.csh` 设置，综合和性能用例使用同一设置。
+- 对候选容量 `D`，最终执行时间必须按同一个统一性能用例计算：
+  `T_D = converged_period_D × total_cycles_D`。不同容量必须分别寻找自己
+  的可收敛周期，不能用固定周期下的 cycles、WNS 或面积单项排名。
+- 基础 setup budget 为设置周期的 `0.9`。频率高于 1.5 GHz 时 ICG
+  delay 为 50 ps；频率小于等于 1.5 GHz 时为 100 ps。时钟周期小于
+  0.4 ns 时 uncertainty 固定为 35 ps，其余档位以实际时序报告为准。
+- 功耗使用 PTPX 输出的瓦数。最终比较量为
+  `score_D = 1 / (T_D^4 × PTPX_power_D × DCG_area_D)`。
+- 性能和功耗用例使用相同种子与负载分布；41.7% 和 90% 两段的发包
+  数量比例为 1:2。设计发生反压时，必须计入延长后的完整用例 cycles。
+
 ## ROB 深度得分搜索实施前查重
 
 - 独立分支：`ab/4fe-rob-depth-score-v33`；RTL 基线为 E021
@@ -26,10 +41,11 @@
   `3bc99500489ab67a8333db3a12b06773a47b1ffd` 已从 E021 实现 32-entry
   ROB、5-bit physical index、6-bit sequence、4x8 picker/read hierarchy 和
   23/13 BKPR threshold。不得重复同一实现。
-- E029-R32 本地 heavy/mid/sparse 为 `10337/11719/24969` cycles；E021
-  为 `6154/9932/25024`。R32 虽将通用 Yosys 全设计组合门代理约减半、
-  depth `65 -> 54`，但 heavy cycles 增加 `68.0%`，不能只凭面积或时序
-  改善判为高分。
+- E029-R32 当前统一种子 heavy/mid/sparse/dep-heavy 为
+  `10337/11719/25028/16143` cycles；E021 为
+  `6154/9932/25024/11291`。R32 虽将通用 Yosys 全设计组合门代理约
+  减半，但 heavy cycles 增加 `68.0%`，不能只凭面积或时序改善判为
+  高分。
 - E021 的 64-entry ring 直接用 sequence low bits 寻址。32/64/128 等
   2 的幂容量可保持这种映射；40/48/56 等容量需要显式 modulo wrap，
   因此先用等效 BKPR 容量代理筛选周期，只有存在总分潜力才实现真实
@@ -42,6 +58,34 @@
   上界筛选。16-entry 小于当前 19-entry 安全 reserve，直接排除；大于
   128 的容量在吞吐理论上限下无法合理覆盖 storage/selector 面积功耗，
   除非 R128 实测出现反常的显著得分收益，否则不继续扩大。
+
+## ROB 深度本地筛选结果
+
+容量代理仅改变 E021 的 BKPR 阈值，用于估计反压造成的 cycles 代价；
+它不代表非 2 次幂物理环的时序、面积或功耗。41.7%/90% 是题目负载
+分段代理，不等同于最终统一用例总 cycles。
+
+| 容量 | 实现 | Heavy | Mid | Sparse | Dep-heavy | 41.7% | 90% | 相对 R64 负载 cycles |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| R32 | E029 真实 RTL | 10337 | 11719 | 25028 | 16143 | 12929 | 10471 | +40.1% |
+| R40 | BKPR 代理 | 8359 | 10339 | — | — | 12046 | 8413 | +19.1% |
+| R48 | BKPR 代理 | 7307 | 10001 | — | — | 11937 | 7303 | +9.2% |
+| R56 | BKPR 代理 | 6601 | 9942 | — | — | 11913 | 6644 | +3.5% |
+| R64 | E021 基线 | 6154 | 9932 | 25024 | 11291 | 11910 | 6233 | baseline |
+
+### R56 真实 RTL 候选
+
+- RTL SHA：`fa59adaaed5fed69f9462e9e8c4f6b4a6a016602`。
+- 配置：56 entries、6-bit physical pointer、7-bit logical sequence、7x8
+  picker/read hierarchy；逻辑 sequence 与 physical ring pointer 分离。
+- 本地 long regression 为 `6601/9942/25024/12059` cycles，41.7%/90%
+  代理为 `11913/6644`；20 组 safe 和 12 组 dual/full 均与 R56 BKPR
+  容量代理逐项同 cycles、同 BKPR。
+- 通用 Yosys 代理：picker `32441 cells / depth 40`，full design
+  `422839 cells / depth 81`；E021 对应为 picker
+  `36681 / depth 42`、full design `481560 / depth 80`。面积代理约减
+  `12.2%`，但 full depth `80 -> 81`，必须等待内网候选自身的收敛周期、
+  DCG area 和 PTPX power 后才能判断得分。
 
 ## 配置
 
