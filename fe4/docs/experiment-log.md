@@ -34,9 +34,10 @@
 
 ## ROB 深度得分搜索实施前查重
 
-- 独立分支：`ab/4fe-rob-depth-score-v33`；RTL 基线为 E021
-  `c30a55d9d21faea805f500ddc8497ed70322ed15`。该分支不纳入 E021
-  之后的时序主线，也不叠加任何 picker/ROB 优化候选。
+- 独立分支：R56 为 `ab/4fe-rob-depth-score-v33`，R48 为
+  `ab/4fe-rob48-score-v34`；RTL 基线为 E021
+  `c30a55d9d21faea805f500ddc8497ed70322ed15`。这些分支不纳入 E021
+  之后的时序主线，也不叠加其它 picker/ROB 优化候选。
 - 已有 E029-R32 RTL
   `3bc99500489ab67a8333db3a12b06773a47b1ffd` 已从 E021 实现 32-entry
   ROB、5-bit physical index、6-bit sequence、4x8 picker/read hierarchy 和
@@ -86,6 +87,25 @@
   `36681 / depth 42`、full design `481560 / depth 80`。面积代理约减
   `12.2%`，但 full depth `80 -> 81`，必须等待内网候选自身的收敛周期、
   DCG area 和 PTPX power 后才能判断得分。
+
+### R48 真实 RTL 候选
+
+- RTL SHA：`2a5c07e0f206d3cf830e02a578f202847eb0858a`。
+- 配置：48 entries、6-bit physical pointer、7-bit logical sequence、6x8
+  picker/read hierarchy；除容量、有效 bank 数和由 `D` 推导的 BKPR
+  threshold 外，与 R56 使用相同的非 2 次幂环实现。
+- 本地 long regression 为 `7307/10001/25024/13035` cycles，41.7%/90%
+  代理为 `11937/7303`；20 组 safe、6 组 dual 和 6 组 full 均与 R48
+  BKPR 容量代理逐项同 cycles、同 BKPR。
+- 通用 Yosys 代理：picker `27573 cells / depth 38`，full design
+  `363765 cells / depth 82`。相对 E021 的 full cells 约减 `24.5%`，但
+  full depth `80 -> 82`，最长代理路径为
+  `u_rob.iss_q[47] -> u_rob.old_u_idx_n[5]`。
+- 用两段代理的 `low + 2*high` 估算，R64/R56/R48 的 cycles 分别为
+  `24376/25201/26543`。若 R48 与 R64 收敛在相同时钟周期，R48 至少还
+  需要 PTPX 功耗比 R64 低约 `5.9%` 才能覆盖 cycles 的四次方损失；
+  若与 R56 同周期，则功耗至少需低约 `5.5%`。真实周期有任何差异时，
+  必须将周期比的四次方同时带入，不能直接套用这两个门槛。
 
 ## 配置
 
