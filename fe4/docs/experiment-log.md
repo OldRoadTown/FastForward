@@ -12,15 +12,20 @@
 2. 只有在新的架构条件会改变原实验结论时才允许重试旧思路，并在写
    RTL 前明确记录该条件、预期收益和失败判据。
 3. RTL 变化先提交，记录完整 Git SHA。
-4. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；
-   任一项变化时新开一组实验，不与旧数据直接比较。
-5. 同时记录所有统一用例的 cycles，并计算
-   `T = clock_period × weighted_total_cycles`。
+4. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；每次
+   记录 `bes_cfg.csh` 周期、实际频率、0.9 clock budget、ICG delay 档位
+   和报告中的 uncertainty。任一项变化时新开一组实验，不与旧数据
+   直接比较。
+5. 记录官方 41.7%/90% 混合负载的最终 elapsed cycles，并计算
+   `T = configured_clock_period × official_elapsed_cycles`。本地 heavy、
+   mid、sparse、dep-heavy 只作为筛查和回归数据。
 6. 记录 worst path 的 startpoint、endpoint、arrival、required 和
    slack；不能只记录 slack。
-7. Area、Power、T 均齐全后再计算
+7. Area、PTPX Power（W）、T 均齐全后再计算
    `score = 1 / (T^4 × Power × Area)`。
 8. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
+9. 官方 DCG、频率、ICG 和负载条件统一见
+   [`evaluation-conditions.md`](evaluation-conditions.md)。
 
 ## E031-R64 实施前查重
 

@@ -84,7 +84,12 @@ win 停顿的主因：窗口头部是等待中的依赖报文，其**目标**在
 
 ---
 
-## 4. 时序（0.4ns 目标）
+## 4. 时序与自定义频率
+
+官方 DCG、clock budget、ICG delay、uncertainty、PTPX 功耗和混合负载
+条件见 [`evaluation-conditions.md`](evaluation-conditions.md)。实际周期由
+`design/hdl/bes_cfg.csh` 设置，并同时用于综合和性能仿真；下文的
+`0.4 ns` 是历史时序压力测试点，不是固定的题目周期或最终得分工作点。
 
 最紧路径仍是 I0 pick：64b 旋转（6 级）+ 3 路并行优先编码（~7 级）+ 年龄比较/critical 择优 + 偷取匹配链（捐出者年龄最小值 4 选 + 双接收者扫描，~8 级，与 PE 部分并行）。挡位：
 
