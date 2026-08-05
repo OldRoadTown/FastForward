@@ -93,6 +93,21 @@
   picker 逻辑深度，或内网 WNS 收益不足以覆盖面积/功耗增加，也拒绝且
   不进入组合版本。
 
+## E032-C1 内网结论
+
+- 结论：拒绝，不进入组合版本。在与 E021 相同约束的内网运行中，用户
+  回报 WNS 约 `-0.20 ns`，明显劣于 E021 的 `-0.1684 ns`；精确
+  required/arrival、面积和违例数待完整报告补录。
+- 关键路径从 E021 的 `rdy_q -> picker` 转移为 `picked_q -> picked ->
+  ROB/top-level picked fanout -> picker -> pk_tgt_q` 同组反馈路径。E032
+  在每个 class candidate 前直接使用同一个 aggregate `picked_q` 位，
+  class-ready 预解码减少的 compare 深度被 picked feedback 的扇出和
+  物理布线代价抵消。
+- 后续不得在 E032 上叠加。新候选必须回到 E021，并直接消除 safe
+  picker 对 aggregate `picked_q` 的读取；同时不得重复
+  `f8a403b231e1bc040fabdf521e1b8ff3f5493d3d` 已试过的 aggregate
+  picked mask/commit 双寄存器复制。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
@@ -117,7 +132,7 @@
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E031-R64 | `aa33b5f6284e7f65fde048e6a9cba9d333d4fb80` | E021 + ROB fixed-order | 6154 | 9932 | 25024 | 0.2871 | 0.4645 | -0.1774 | 31133 | — | — | — | 拒绝：10363 条违例；worst `rdy_q -> pick/sel_tgt -> pk_tgt_q`；另有 `sched_idx_q -> res_now -> egress/lane_d_f` -0.1769 ns；clock-gating 改善到 -0.0256 ns，但相对 E021 WNS 恶化 9.0 ps、面积 +77、违例 +9；dep-heavy 11291 cycles，与 E021 四项完全一致；旧/new `peH` 等价检查通过 |
-| E032-C1 | `5e5e3220df6dd9b9e88203817d36b543f2e5794d` | E021 + registered class-ready | 6154 | 9932 | 25024 | — | — | — | — | — | — | — | 待内网 STA/PPA；dep-heavy 11291，与 E021 四项完全一致；另有 20 组 safe 和 12 组 full/WAKE_BYPASS 随机负载逐项同周期；picker 通用 cells 36681→35863（-818，-2.23%）、depth 42→41；全设计通用 cells 481560→482714（+1154，+0.240%）、全局 depth 80 不变；送综合必须同时使用 `ff.v`、`ff_pick.v`、`ff_rob.v` |
+| E032-C1 | `5e5e3220df6dd9b9e88203817d36b543f2e5794d` | E021 + registered class-ready | 6154 | 9932 | 25024 | — | — | ≈-0.20 | — | — | — | — | 拒绝：内网 WNS 约 -0.20 ns，转为 `picked_q -> picker -> pk_tgt_q` 同组反馈路径；精确 required/arrival、面积和违例数待补；dep-heavy 11291，与 E021 四项完全一致；20 组 safe 和 12 组 full 随机负载逐项同周期；picker 通用 cells -2.23%，但全设计通用 cells +0.240% |
 
 ## 分支与提交约定
 
