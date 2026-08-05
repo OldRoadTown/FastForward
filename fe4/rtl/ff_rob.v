@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-rob-depth-v33
-// Experiment   : ROB-R56 score candidate
+// RTL revision : 4FE-rob-depth-v34
+// Experiment   : ROB-R48 score candidate
 // Based on     : E021-N1 / 4FE-safe-v8
-// Changes      : separate sequence counters from 56-entry physical pointers
+// Changes      : separate sequence counters from 48-entry physical pointers
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -14,7 +14,7 @@
 // guarantees no needed result is ever overwritten.
 // =============================================================================
 module ff_rob #(
-  parameter D   = 56,
+  parameter D   = 48,
   parameter AW  = 6,
   parameter SW  = 7,
   parameter NFE = 4

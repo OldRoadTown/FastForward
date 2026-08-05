@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-rob-depth-v33
-// Experiment   : ROB-R56 score candidate
+// RTL revision : 4FE-rob-depth-v34
+// Experiment   : ROB-R48 score candidate
 // Based on     : E021-N1 / 4FE-safe-v20
-// Changes      : use a 56-entry ROB with explicit physical ring pointers
+// Changes      : use a 48-entry ROB with explicit physical ring pointers
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
@@ -25,7 +25,7 @@
 //
 // Architecture summary (details in docs/design_spec.md):
 //   4 FEs, primary latency-class binding + work stealing with exact
-//   output-slot bookkeeping, 56-entry unified-storage ROB, out-of-order
+//   output-slot bookkeeping, 48-entry unified-storage ROB, out-of-order
 //   issue / in-order output, pre-wake (dependent enters the FE in the same
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
@@ -66,7 +66,7 @@ module ff #(
   output wire         pkt_in_bkpr
 );
 
-  localparam D   = 56;
+  localparam D   = 48;
   localparam AW  = 6;
   localparam SW  = 7;
   localparam NFE = 4;

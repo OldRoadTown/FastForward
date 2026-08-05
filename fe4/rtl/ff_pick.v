@@ -1,8 +1,8 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-rob-depth-v33
-// Experiment   : ROB-R56 score candidate
+// RTL revision : 4FE-rob-depth-v34
+// Experiment   : ROB-R48 score candidate
 // Based on     : E021-N1 / 4FE-safe-v20
 // Changes      : search seven banks and use explicit circular index distance
 //
@@ -17,7 +17,7 @@
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
 module ff_pick #(
-  parameter D           = 56,
+  parameter D           = 48,
   parameter AW          = 6,
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,

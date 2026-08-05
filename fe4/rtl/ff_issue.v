@@ -1,8 +1,8 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-rob-depth-v33
-// Experiment   : ROB-R56 score candidate
+// RTL revision : 4FE-rob-depth-v34
+// Experiment   : ROB-R48 score candidate
 // Based on     : E021-N1 / 4FE-safe-v11
 // Changes      : limit hierarchical reads to the implemented ROB banks
 //
@@ -16,7 +16,7 @@
 // pipe (issue_v/issue_idx) is always fed FEIN-cycle aligned.
 // =============================================================================
 module ff_issue #(
-  parameter D        = 56,
+  parameter D        = 48,
   parameter AW       = 6,
   parameter NFE      = 4,
   parameter REG_FEIN = 0,
