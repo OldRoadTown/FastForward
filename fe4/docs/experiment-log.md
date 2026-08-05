@@ -6,16 +6,21 @@
 
 ## 记录规则
 
-1. RTL 变化先提交，记录完整 Git SHA。
-2. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；
+1. 修改 RTL 前必须检索全部 Git 历史和分支，核对是否已有相同或实质
+   相似的实现。记录匹配的提交/分支、代码差异和新方案的关键路径假设；
+   没有实质架构差异时禁止重复实验。
+2. 只有在新的架构条件会改变原实验结论时才允许重试旧思路，并在写
+   RTL 前明确记录该条件、预期收益和失败判据。
+3. RTL 变化先提交，记录完整 Git SHA。
+4. 综合脚本、工艺库、corner、时钟约束和活动文件必须保持一致；
    任一项变化时新开一组实验，不与旧数据直接比较。
-3. 同时记录所有统一用例的 cycles，并计算
+5. 同时记录所有统一用例的 cycles，并计算
    `T = clock_period × weighted_total_cycles`。
-4. 记录 worst path 的 startpoint、endpoint、arrival、required 和
+6. 记录 worst path 的 startpoint、endpoint、arrival、required 和
    slack；不能只记录 slack。
-5. Area、Power、T 均齐全后再计算
+7. Area、Power、T 均齐全后再计算
    `score = 1 / (T^4 × Power × Area)`。
-6. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
+8. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
 
 ## 配置
 
