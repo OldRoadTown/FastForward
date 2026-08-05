@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v8
-// Experiment   : E009
-// Based on     : 4FE-safe-v7 / E008
-// Changes      : direct oldest-unissued next pointer; remove advance add chain
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v8
+// Changes      : separate sequence counters from 56-entry physical pointers
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -14,7 +14,7 @@
 // guarantees no needed result is ever overwritten.
 // =============================================================================
 module ff_rob #(
-  parameter D   = 64,
+  parameter D   = 56,
   parameter AW  = 6,
   parameter SW  = 7,
   parameter NFE = 4
@@ -56,18 +56,22 @@ module ff_rob #(
   output wire [D*2-1:0]      rob_lat_f,
   output wire [D*AW-1:0]     rob_tgt_f,
   output wire [D-1:0]        rob_isdep_o,
-  output wire [SW-1:0]       alloc_seq_o,
   output wire [SW-1:0]       out_seq_o,
-  output wire [SW-1:0]       old_u_o,
+  output wire [AW-1:0]       alloc_idx_o,
+  output wire [AW-1:0]       out_idx_o,
+  output wire [AW-1:0]       old_u_idx_o,
   output reg                 bkpr_r         // registered BKPR
 );
 
+  localparam NBANK = D / 8;
+  localparam [AW:0] D_EXT = D;
+
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
-  //  * occupancy   : entry reuse (seq n overwrites n-64):  (D-1)-8      = 55
-  //  * issue window: retained-result overwrite hazard   : (D-7)-8-lag   = 45
-  localparam [SW-1:0] OCC_TH = 55;
-  localparam [SW-1:0] WIN_TH = 45;
+  //  * occupancy   : entry reuse:                    (D-1)-8 = D-9
+  //  * issue window: retained-result overwrite hazard: D-19
+  localparam [SW-1:0] OCC_TH = D - 9;
+  localparam [SW-1:0] WIN_TH = D - 19;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -89,9 +93,34 @@ module ff_rob #(
     end
   endfunction
 
+  function [AW-1:0] idx_add4;
+    input [AW-1:0] idx;
+    input [2:0]    delta;
+    reg [AW:0] sum;
+    reg [AW:0] wrapped;
+    begin
+      sum = {1'b0, idx} + {{(AW-2){1'b0}}, delta};
+      wrapped = sum - D_EXT;
+      idx_add4 = (sum >= D_EXT) ? wrapped[AW-1:0] : sum[AW-1:0];
+    end
+  endfunction
+
+  function [AW-1:0] idx_dist;
+    input [AW-1:0] newer;
+    input [AW-1:0] older;
+    reg [AW:0] distance;
+    begin
+      if (newer >= older)
+        distance = {1'b0, newer} - {1'b0, older};
+      else
+        distance = {1'b0, newer} + D_EXT - {1'b0, older};
+      idx_dist = distance[AW-1:0];
+    end
+  endfunction
+
   // Oldest set entry relative to base, returned as {valid, physical index}.
-  // The two-level 8x8 search preserves exact wraparound order without a
-  // 64-bit barrel rotate followed by a flat priority encoder.
+  // The banked search preserves exact wraparound order without a full-width
+  // barrel rotate followed by a flat priority encoder.
   function [AW:0] peH;
     input [D-1:0]  v;
     input [AW-1:0] base;
@@ -105,7 +134,7 @@ module ff_rob #(
     begin
       bank_pe_f = 32'b0;
       bank_v    = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < NBANK; b = b + 1) begin
         bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
         bank_v[b] = bank_pe_f[b*4+3];
       end
@@ -182,7 +211,9 @@ module ff_rob #(
 
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
-  reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
+  reg [AW-1:0] alloc_idx_q;
+  reg [AW-1:0] out_idx_q;
+  reg [AW-1:0] old_u_idx_q;
 
   // -------------------------------------------------------------------------
   // result decode + wake-up
@@ -213,39 +244,31 @@ module ff_rob #(
   reg [AW:0]   first_niss;
   reg [AW-1:0] first_dist;
   reg [SW-1:0] dist_f;
-  reg [SW-1:0] first_seq;
   reg          take_first;
   wire [D-1:0] iss_eff = iss_q | picked;
   always @* begin
     // picked is now the registered issue/commit bitmap.  Include it in the
     // look-ahead so delaying the ROB state write until issue does not add an
     // extra cycle to oldest-unissued pointer advancement.
-    first_niss = peH(~iss_eff, old_u_q[AW-1:0]);
-    first_dist = first_niss[AW-1:0] - old_u_q[AW-1:0];
-    dist_f     = alloc_seq_q - old_u_q;
-    // Reconstruct the 7-bit sequence number directly from the selected
-    // physical index.  Crossing physical slot 63 toggles the sequence epoch.
-    // The active window is kept below D entries by BKPR, so the reconstruction
-    // is unambiguous and equals old_u_q + {1'b0, first_dist}.
-    first_seq  = {
-      old_u_q[SW-1]
-        ^ (first_niss[AW-1:0] < old_u_q[AW-1:0]),
-      first_niss[AW-1:0]
-    };
+    first_niss = peH(~iss_eff, old_u_idx_q);
+    first_dist = idx_dist(first_niss[AW-1:0], old_u_idx_q);
+    dist_f     = {{(SW-AW){1'b0}}, idx_dist(alloc_idx_q, old_u_idx_q)};
     take_first = first_niss[AW] && ({1'b0, first_dist} <= dist_f);
   end
   // If the first not-issued physical entry lies beyond the allocation
-  // frontier (or none exists), catch up exactly to alloc_seq_q.  This is
-  // equivalent to min(adv_raw, dist_f) followed by old_u_q + adv, but removes
-  // that mux/compare/add chain from the old_u_q register input.
-  wire [SW-1:0] old_u_n = take_first ? first_seq : alloc_seq_q;
+  // frontier (or none exists), catch up exactly to the physical allocation
+  // pointer.  No logical-sequence reconstruction is needed for ROB addressing.
+  wire [AW-1:0] old_u_idx_n = take_first ? first_niss[AW-1:0]
+                                          : alloc_idx_q;
 
   // -------------------------------------------------------------------------
   // BKPR (registered output)
   // -------------------------------------------------------------------------
   wire [SW-1:0] alloc_nxt = alloc_seq_q + {4'b0, acnt};
   wire [SW-1:0] occ       = alloc_nxt - out_seq_q;
-  wire [SW-1:0] win       = alloc_nxt - old_u_q;
+  wire [AW-1:0] alloc_idx_n = idx_add4(alloc_idx_q, acnt);
+  wire [AW-1:0] win_idx = idx_dist(alloc_idx_n, old_u_idx_q);
+  wire [SW-1:0] win = {{(SW-AW){1'b0}}, win_idx};
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
@@ -287,7 +310,9 @@ module ff_rob #(
       resv_q      <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
-      old_u_q     <= {SW{1'b0}};
+      alloc_idx_q <= {AW{1'b0}};
+      out_idx_q   <= {AW{1'b0}};
+      old_u_idx_q <= {AW{1'b0}};
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
@@ -308,7 +333,9 @@ module ff_rob #(
       end
       alloc_seq_q <= alloc_seq_q + {4'b0, acnt};
       out_seq_q   <= out_seq_q + {4'b0, pop_cnt};
-      old_u_q     <= old_u_n;
+      alloc_idx_q <= alloc_idx_n;
+      out_idx_q   <= idx_add4(out_idx_q, pop_cnt);
+      old_u_idx_q <= old_u_idx_n;
     end
   end
 
@@ -346,8 +373,9 @@ module ff_rob #(
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
   assign outp_o      = outp_q;
-  assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
-  assign old_u_o     = old_u_q;
+  assign alloc_idx_o = alloc_idx_q;
+  assign out_idx_o   = out_idx_q;
+  assign old_u_idx_o = old_u_idx_q;
 
 endmodule

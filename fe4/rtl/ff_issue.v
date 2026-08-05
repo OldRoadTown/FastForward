@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v11
-// Experiment   : E012-N1
-// Based on     : 4FE-safe-v10 / E011-N2
-// Changes      : consume I0-registered hierarchical ROB read selects
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v11
+// Changes      : limit hierarchical reads to the implemented ROB banks
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -16,7 +16,7 @@
 // pipe (issue_v/issue_idx) is always fed FEIN-cycle aligned.
 // =============================================================================
 module ff_issue #(
-  parameter D        = 64,
+  parameter D        = 56,
   parameter AW       = 6,
   parameter NFE      = 4,
   parameter REG_FEIN = 0,
@@ -49,6 +49,8 @@ module ff_issue #(
   output wire [NFE*AW-1:0]       issue_idx_f,
   output wire [NFE*2-1:0]        issue_lat_f
 );
+
+  localparam NBANK = D / 8;
 
   // unpack
   wire [127:0]  rob_data [0:D-1];
@@ -86,15 +88,19 @@ module ff_issue #(
       wire [AW-1:0] ridx = pk_idx[gf];
       wire [127:0] bank_data [0:7];
       for (gb = 0; gb < 8; gb = gb + 1) begin : g_bank_read
-        assign bank_data[gb] =
-          (rob_data[gb*8+0] & {128{pk_local_oh[gf][0]}})
-        | (rob_data[gb*8+1] & {128{pk_local_oh[gf][1]}})
-        | (rob_data[gb*8+2] & {128{pk_local_oh[gf][2]}})
-        | (rob_data[gb*8+3] & {128{pk_local_oh[gf][3]}})
-        | (rob_data[gb*8+4] & {128{pk_local_oh[gf][4]}})
-        | (rob_data[gb*8+5] & {128{pk_local_oh[gf][5]}})
-        | (rob_data[gb*8+6] & {128{pk_local_oh[gf][6]}})
-        | (rob_data[gb*8+7] & {128{pk_local_oh[gf][7]}});
+        if (gb < NBANK) begin : g_valid_bank
+          assign bank_data[gb] =
+            (rob_data[gb*8+0] & {128{pk_local_oh[gf][0]}})
+          | (rob_data[gb*8+1] & {128{pk_local_oh[gf][1]}})
+          | (rob_data[gb*8+2] & {128{pk_local_oh[gf][2]}})
+          | (rob_data[gb*8+3] & {128{pk_local_oh[gf][3]}})
+          | (rob_data[gb*8+4] & {128{pk_local_oh[gf][4]}})
+          | (rob_data[gb*8+5] & {128{pk_local_oh[gf][5]}})
+          | (rob_data[gb*8+6] & {128{pk_local_oh[gf][6]}})
+          | (rob_data[gb*8+7] & {128{pk_local_oh[gf][7]}});
+        end else begin : g_unused_bank
+          assign bank_data[gb] = 128'b0;
+        end
       end
       wire [127:0] packet_data =
           (bank_data[0] & {128{pk_bank_oh[gf][0]}})
@@ -107,7 +113,7 @@ module ff_issue #(
         | (bank_data[7] & {128{pk_bank_oh[gf][7]}});
       // pk_tgt was read and registered beside pk_idx in I0.  The I1 FE-input
       // path therefore contains only the target-data read, not two cascaded
-      // 64-entry muxes (packet->target followed by target->data).
+      // full-ROB muxes (packet->target followed by target->data).
       wire [AW-1:0] tgt  = pk_tgt[gf];
       assign fein_v[gf]   = pk_v_q[gf];
       assign fein_d[gf]   = packet_data;

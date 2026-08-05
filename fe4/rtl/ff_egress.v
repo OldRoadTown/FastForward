@@ -1,17 +1,17 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v3
-// Experiment   : E004
-// Based on     : 4FE-safe-v2 / E003
-// Changes      : free-running lane data registers; preserve same-cycle bypass
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v3
+// Changes      : use an explicit physical output pointer for a 56-entry ring
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
 // arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
 // =============================================================================
 module ff_egress #(
-  parameter D   = 64,
+  parameter D   = 56,
   parameter AW  = 6,
   parameter SW  = 7,
   parameter NFE = 4
@@ -19,6 +19,7 @@ module ff_egress #(
   input  wire                clk,
   input  wire                rst_n,
   input  wire [SW-1:0]       out_seq,
+  input  wire [AW-1:0]       out_idx,
   input  wire [D-1:0]        resv_q,
   input  wire [D-1:0]        outp_q,
   input  wire [D-1:0]        res_now,
@@ -30,6 +31,20 @@ module ff_egress #(
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
   output reg  [511:0]        lane_d_f       // registered PKTOUT data, 4 x 128
 );
+
+  localparam [AW:0] D_EXT = D;
+
+  function [AW-1:0] idx_add4;
+    input [AW-1:0] idx;
+    input [2:0]    delta;
+    reg [AW:0] sum;
+    reg [AW:0] wrapped;
+    begin
+      sum = {1'b0, idx} + {{(AW-2){1'b0}}, delta};
+      wrapped = sum - D_EXT;
+      idx_add4 = (sum >= D_EXT) ? wrapped[AW-1:0] : sum[AW-1:0];
+    end
+  endfunction
 
   // unpack
   wire [127:0] rob_data [0:D-1];
@@ -49,10 +64,10 @@ module ff_egress #(
   // Same-cycle result bypass remains part of the completion check.
   wire [D-1:0] cmpl = resv_q | res_now;
 
-  wire [AW-1:0] oidx0 = out_seq[AW-1:0];
-  wire [AW-1:0] oidx1 = out_seq[AW-1:0] + 6'd1;
-  wire [AW-1:0] oidx2 = out_seq[AW-1:0] + 6'd2;
-  wire [AW-1:0] oidx3 = out_seq[AW-1:0] + 6'd3;
+  wire [AW-1:0] oidx0 = out_idx;
+  wire [AW-1:0] oidx1 = idx_add4(out_idx, 3'd1);
+  wire [AW-1:0] oidx2 = idx_add4(out_idx, 3'd2);
+  wire [AW-1:0] oidx3 = idx_add4(out_idx, 3'd3);
   wire can0 = cmpl[oidx0] & ~outp_q[oidx0];
   wire can1 = cmpl[oidx1] & ~outp_q[oidx1];
   wire can2 = cmpl[oidx2] & ~outp_q[oidx2];
@@ -90,7 +105,7 @@ module ff_egress #(
     for (l = 0; l < 4; l = l + 1) begin
       kl         = l[1:0] - out_seq[1:0];
       out_act[l] = ({1'b0, kl} < pop_cnt);
-      osrc       = out_seq[AW-1:0] + {4'b0, kl};
+      osrc       = idx_add4(out_idx, {1'b0, kl});
       osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
       out_dat[l] = res_now[osi] ? fe_od[rob_src[osi]] : rob_data[osi];
     end

@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v20
+// Changes      : search seven banks and use explicit circular index distance
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -17,7 +17,7 @@
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
 module ff_pick #(
-  parameter D           = 64,
+  parameter D           = 56,
   parameter AW          = 6,
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
@@ -43,6 +43,9 @@ module ff_pick #(
   output wire [NFE*8-1:0]    pk_local_oh_f,
   output wire [D*2-1:0]      rob_src_f     // FE each entry was issued to
 );
+
+  localparam NBANK = D / 8;
+  localparam [AW:0] D_EXT = D;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -74,6 +77,19 @@ module ff_pick #(
     begin
       t = {v, v} >> s;
       rotr8 = t[7:0];
+    end
+  endfunction
+
+  function [AW-1:0] age_dist;
+    input [AW-1:0] newer;
+    input [AW-1:0] older;
+    reg [AW:0] distance;
+    begin
+      if (newer >= older)
+        distance = {1'b0, newer} - {1'b0, older};
+      else
+        distance = {1'b0, newer} + D_EXT - {1'b0, older};
+      age_dist = distance[AW-1:0];
     end
   endfunction
 
@@ -181,7 +197,7 @@ module ff_pick #(
     begin
       bank_pe_f = 32'b0;
       bank_v    = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < NBANK; b = b + 1) begin
         bank_pe_f[b*4 +: 4] = pe8(v[b*8 +: 8]);
         bank_v[b] = bank_pe_f[b*4+3];
       end
@@ -238,7 +254,7 @@ module ff_pick #(
       bank_h_f = 96'b0;
       bank_tgt_f = {(8*AW){1'b0}};
       bank_v   = 8'b0;
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < NBANK; b = b + 1) begin
         bank_h_f[b*12 +: 12] = pe8h(v[b*8 +: 8]);
         bank_v[b] = bank_h_f[b*12+3];
         for (l = 0; l < 8; l = l + 1)
@@ -254,7 +270,7 @@ module ff_pick #(
       pre_h     = pe8h(base_bits & ~post_mask);
       // The post-base local PE selects rbase itself exactly when the window
       // head is a candidate.  Export that already-computed fact so the safe
-      // critical override does not wait for the full 64-entry page index and
+      // critical override does not wait for the full ROB page index and
       // does not infer the separate cand[rbase] 64-to-1 mux tried in E015.
       head_present = post_h[4 + base[2:0]];
       post_tgt  = {AW{1'b0}};
@@ -271,7 +287,7 @@ module ff_pick #(
       other_bank_oh = bank_sel_h[7:0];
       local_h     = 12'b0;
       other_tgt   = {AW{1'b0}};
-      for (b = 0; b < 8; b = b + 1) begin
+      for (b = 0; b < NBANK; b = b + 1) begin
         local_h = local_h
           | (bank_h_f[b*12 +: 12] & {12{other_bank_oh[b]}});
         other_tgt = other_tgt
@@ -290,7 +306,7 @@ module ff_pick #(
         result_tgt = post_tgt;
         result_bank_oh[base_bank] = 1'b1;
         result_local_oh = post_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
+        for (b = 0; b < NBANK; b = b + 1)
           if (base_bank == b[2:0])
             result_oh[b*8 +: 8] = post_h[11:4];
       end else if (bank_sel_h[11]) begin
@@ -299,7 +315,7 @@ module ff_pick #(
         result_tgt = other_tgt;
         result_bank_oh = other_bank_oh;
         result_local_oh = local_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
+        for (b = 0; b < NBANK; b = b + 1)
           result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
                                  & {8{other_bank_oh[b]}};
       end else if (pre_h[3]) begin
@@ -308,7 +324,7 @@ module ff_pick #(
         result_tgt = pre_tgt;
         result_bank_oh[base_bank] = 1'b1;
         result_local_oh = pre_h[11:4];
-        for (b = 0; b < 8; b = b + 1)
+        for (b = 0; b < NBANK; b = b + 1)
           if (base_bank == b[2:0])
             result_oh[b*8 +: 8] = pre_h[11:4];
       end
@@ -366,11 +382,12 @@ module ff_pick #(
 
   // A registered pick is not removed from rdy_q until its issue/commit edge.
   // The one-hot mask preserves v2 scheduling behavior; the timing reduction
-  // comes from the hierarchical selector replacing the 64-bit rotate/PE cone.
+  // comes from the hierarchical selector replacing the full-width rotate/PE
+  // cone.
   wire [D-1:0] rdy_avail = rdy_q & ~picked;
   wire [D-1:0] rdy_eff   = rdy_avail
                            | (WAKE_BYPASS ? wake_now : {D{1'b0}});
-  localparam [D-1:0] MASK_PHYS_EVEN = {32{2'b01}};
+  localparam [D-1:0] MASK_PHYS_EVEN = {(D/2){2'b01}};
   wire [D-1:0] mask_age_even = rbase[0] ? ~MASK_PHYS_EVEN : MASK_PHYS_EVEN;
 
   // -------------------------------------------------------------------------
@@ -427,8 +444,8 @@ module ff_pick #(
         wire [AW:0]  peo  = peH(cand & ~mask_age_even, rbase);
         wire [AW:0]  pec  = peH(cand & crit_q, rbase);
         wire         bothf  = pee[AW] & peo[AW];
-        wire [AW-1:0] pee_age = pee[AW-1:0] - rbase;
-        wire [AW-1:0] peo_age = peo[AW-1:0] - rbase;
+        wire [AW-1:0] pee_age = age_dist(pee[AW-1:0], rbase);
+        wire [AW-1:0] peo_age = age_dist(peo[AW-1:0], rbase);
         wire         eolder = (pee_age < peo_age);
         wire [AW:0]  page = bothf ? (eolder ? pee : peo)
                                   : (pee[AW] ? pee : peo);
@@ -505,7 +522,7 @@ module ff_pick #(
     st1_dv = 1'b0; st1_dc = 2'd0; st1_didx = {AW{1'b0}};
     d_age  = {AW{1'b1}};
     for (dc = NFE-1; dc >= 0; dc = dc - 1) begin
-      c_age = sec_idx_q[dc] - rbase;
+      c_age = age_dist(sec_idx_q[dc], rbase);
       if (don_ok[dc] && (!st1_dv || (c_age < d_age))) begin
         st1_dv = 1'b1; st1_dc = dc[1:0]; st1_didx = sec_idx_q[dc];
         d_age  = c_age;

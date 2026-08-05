@@ -2,16 +2,16 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v10
-// Experiment   : E011-N2
-// Based on     : 4FE-safe-v9 / E010
-// Changes      : split data/control compaction; resolve readiness per lane
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v10
+// Changes      : address a non-power-of-two ROB through its physical pointer
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
 // =============================================================================
 module ff_ingress #(
-  parameter D  = 64,
+  parameter D  = 56,
   parameter AW = 6,
   parameter SW = 7
 )(
@@ -22,7 +22,7 @@ module ff_ingress #(
   input  wire [511:0]    in_data_f,     // 4 x 128
   input  wire [19:0]     in_ctrl_f,     // 4 x 5
   // context
-  input  wire [SW-1:0]   alloc_seq,
+  input  wire [AW-1:0]   alloc_idx,
   input  wire [D-1:0]    res_known,     // resv | res_now | res_pred
   // allocation outputs
   output wire [2:0]      acnt_o,
@@ -37,6 +37,35 @@ module ff_ingress #(
   output wire [3:0]      kw_vld_o,      // k valid && dependent
   output wire [4*AW-1:0] k_tgt_f
 );
+
+  localparam [AW:0] D_EXT = D;
+
+  function [AW-1:0] idx_add4;
+    input [AW-1:0] idx;
+    input [2:0]    delta;
+    reg [AW:0] sum;
+    reg [AW:0] wrapped;
+    begin
+      sum = {1'b0, idx} + {{(AW-2){1'b0}}, delta};
+      wrapped = sum - D_EXT;
+      idx_add4 = (sum >= D_EXT) ? wrapped[AW-1:0] : sum[AW-1:0];
+    end
+  endfunction
+
+  function [AW-1:0] idx_sub7;
+    input [AW-1:0] idx;
+    input [2:0]    delta;
+    reg [AW:0] wide_idx, wide_delta, result;
+    begin
+      wide_idx = {1'b0, idx};
+      wide_delta = {{(AW-2){1'b0}}, delta};
+      if (wide_idx >= wide_delta)
+        result = wide_idx - wide_delta;
+      else
+        result = wide_idx + D_EXT - wide_delta;
+      idx_sub7 = result[AW-1:0];
+    end
+  endfunction
 
   // -------------------------------------------------------------------------
   // unpack
@@ -161,15 +190,14 @@ module ff_ingress #(
   reg          k_isdep[0:3];
 
   integer k;
-  reg [SW-1:0] seq_k, tgt_k;
+  reg [AW-1:0] idx_k;
   always @* begin
     for (k = 0; k < 4; k = k + 1) begin
       k_lat[k]   = comp_ctrl[k][1:0];
       k_dep[k]   = comp_ctrl[k][4:2];
       k_isdep[k] = (k_dep[k] != 3'd0);
-      seq_k      = alloc_seq + k[SW-1:0];
-      tgt_k      = seq_k - {4'b0, k_dep[k]};
-      k_tgt[k]   = tgt_k[AW-1:0];
+      idx_k      = idx_add4(alloc_idx, k[2:0]);
+      k_tgt[k]   = idx_sub7(idx_k, k_dep[k]);
     end
   end
 
@@ -180,7 +208,7 @@ module ff_ingress #(
   // ROB source slot, avoiding a second ready-bit rotation mux afterwards.
   reg [1:0]    lane_rank [0:3];
   reg [2:0]    lane_dep [0:3];
-  reg [SW-1:0] lane_seq, lane_tgt_seq;
+  reg [AW-1:0] lane_idx, lane_tgt_idx;
   reg          lane_isdep, lane_incyc, lane_tdone;
   reg [3:0]    slot_rdy_direct, slot_wtg_direct;
   reg [1:0]    lane_slot;
@@ -196,13 +224,13 @@ module ff_ingress #(
     for (l = 0; l < 4; l = l + 1) begin
       lane_dep[l]  = in_ctrl_q[l][4:2];
       lane_isdep   = (lane_dep[l] != 3'd0);
-      lane_seq     = alloc_seq + {{(SW-2){1'b0}}, lane_rank[l]};
-      lane_tgt_seq = lane_seq - {4'b0, lane_dep[l]};
+      lane_idx     = idx_add4(alloc_idx, {1'b0, lane_rank[l]});
+      lane_tgt_idx = idx_sub7(lane_idx, lane_dep[l]);
       lane_incyc   = lane_isdep
                      && ({1'b0, lane_dep[l]}
                          <= {2'b0, lane_rank[l]});
-      lane_tdone   = res_known[lane_tgt_seq[AW-1:0]];
-      lane_slot    = alloc_seq[1:0] + lane_rank[l];
+      lane_tdone   = res_known[lane_tgt_idx];
+      lane_slot    = alloc_idx[1:0] + lane_rank[l];
       if (in_vld_q[l]) begin
         slot_rdy_direct[lane_slot] = !lane_isdep
                                       || (!lane_incyc && lane_tdone);
@@ -226,7 +254,7 @@ module ff_ingress #(
   reg [1:0] kj;
   always @* begin
     for (j = 0; j < 4; j = j + 1) begin
-      kj            = j[1:0] - alloc_seq[1:0];
+      kj            = j[1:0] - alloc_idx[1:0];
       slot_dat[j]   = comp_data[kj];
       slot_lat[j]   = k_lat[kj];
       slot_tgt[j]   = k_tgt[kj];
@@ -237,12 +265,12 @@ module ff_ingress #(
   end
 
   reg [D-1:0] alloc_oh;
-  reg [SW-1:0] aseq;
+  reg [AW-1:0] aidx;
   always @* begin
     alloc_oh = {D{1'b0}};
     for (k = 0; k < 4; k = k + 1) begin
-      aseq = alloc_seq + k[SW-1:0];
-      if (k[2:0] < acnt) alloc_oh[aseq[AW-1:0]] = 1'b1;
+      aidx = idx_add4(alloc_idx, k[2:0]);
+      if (k[2:0] < acnt) alloc_oh[aidx] = 1'b1;
     end
   end
 

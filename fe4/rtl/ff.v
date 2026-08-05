@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-rob-depth-v33
+// Experiment   : ROB-R56 score candidate
+// Based on     : E021-N1 / 4FE-safe-v20
+// Changes      : use a 56-entry ROB with explicit physical ring pointers
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
@@ -25,7 +25,7 @@
 //
 // Architecture summary (details in docs/design_spec.md):
 //   4 FEs, primary latency-class binding + work stealing with exact
-//   output-slot bookkeeping, 64-entry unified-storage ROB, out-of-order
+//   output-slot bookkeeping, 56-entry unified-storage ROB, out-of-order
 //   issue / in-order output, pre-wake (dependent enters the FE in the same
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
@@ -66,7 +66,7 @@ module ff #(
   output wire         pkt_in_bkpr
 );
 
-  localparam D   = 64;
+  localparam D   = 56;
   localparam AW  = 6;
   localparam SW  = 7;
   localparam NFE = 4;
@@ -112,7 +112,8 @@ module ff #(
   wire [D*128-1:0]    rob_data_f;
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
-  wire [SW-1:0]       alloc_seq, out_seq, old_u;
+  wire [SW-1:0]       out_seq;
+  wire [AW-1:0]       alloc_idx, out_idx, old_u_idx;
 
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
@@ -145,7 +146,7 @@ module ff #(
   ff_ingress #(.D(D), .AW(AW), .SW(SW)) u_ingress (
     .clk(clk), .rst_n(rst_n),
     .in_vld(in_vld), .in_data_f(in_data_f), .in_ctrl_f(in_ctrl_f),
-    .alloc_seq(alloc_seq), .res_known(res_known),
+    .alloc_idx(alloc_idx), .res_known(res_known),
     .acnt_o(acnt),
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
     .slot_rdy_o(slot_rdy), .slot_wtg_o(slot_wtg), .slot_isdep_o(slot_isdep),
@@ -169,7 +170,9 @@ module ff #(
     .resv_o(resv_q), .outp_o(outp_q),
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
-    .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
+    .out_seq_o(out_seq),
+    .alloc_idx_o(alloc_idx), .out_idx_o(out_idx),
+    .old_u_idx_o(old_u_idx),
     .bkpr_r(pkt_in_bkpr)
   );
 
@@ -179,7 +182,7 @@ module ff #(
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
-    .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
+    .rbase(old_u_idx), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
@@ -257,7 +260,7 @@ module ff #(
 
   ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_egress (
     .clk(clk), .rst_n(rst_n),
-    .out_seq(out_seq),
+    .out_seq(out_seq), .out_idx(out_idx),
     .resv_q(resv_q), .outp_q(outp_q), .res_now(res_now),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
     .pop_cnt(pop_cnt), .pop_oh(pop_oh),
