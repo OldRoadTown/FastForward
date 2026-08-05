@@ -117,6 +117,7 @@
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E031-R64 | `aa33b5f6284e7f65fde048e6a9cba9d333d4fb80` | E021 + ROB fixed-order | 6154 | 9932 | 25024 | 0.2871 | 0.4645 | -0.1774 | 31133 | — | — | — | 拒绝：10363 条违例；worst `rdy_q -> pick/sel_tgt -> pk_tgt_q`；另有 `sched_idx_q -> res_now -> egress/lane_d_f` -0.1769 ns；clock-gating 改善到 -0.0256 ns，但相对 E021 WNS 恶化 9.0 ps、面积 +77、违例 +9；dep-heavy 11291 cycles，与 E021 四项完全一致；旧/new `peH` 等价检查通过 |
+| E032-C1 | `5e5e3220df6dd9b9e88203817d36b543f2e5794d` | E021 + registered class-ready | 6154 | 9932 | 25024 | — | — | — | — | — | — | — | 待内网 STA/PPA；dep-heavy 11291，与 E021 四项完全一致；另有 20 组 safe 和 12 组 full/WAKE_BYPASS 随机负载逐项同周期；picker 通用 cells 36681→35863（-818，-2.23%）、depth 42→41；全设计通用 cells 481560→482714（+1154，+0.240%）、全局 depth 80 不变；送综合必须同时使用 `ff.v`、`ff_pick.v`、`ff_rob.v` |
 
 ## 分支与提交约定
 
@@ -132,5 +133,8 @@
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
 - `timing/4fe-rob-onehot-v30`：从 E021 精确 SHA 创建，只隔离 64-entry
   ROB fixed-order bank/local selector；内网结果确认前不与 picker 候选合并。
+- `timing/4fe-rdy-class-v31`：从 E021 精确 RTL 创建，只把 ready 状态
+  按 latency class 寄存到 ROB/picker 边界；不包含 E031 ROB selector 或
+  egress 修改，内网结果确认前不与其它候选合并。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
