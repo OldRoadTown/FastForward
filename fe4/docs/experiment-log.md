@@ -17,6 +17,32 @@
    `score = 1 / (T^4 × Power × Area)`。
 6. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
 
+## ROB 深度得分搜索实施前查重
+
+- 独立分支：`ab/4fe-rob-depth-score-v33`；RTL 基线为 E021
+  `c30a55d9d21faea805f500ddc8497ed70322ed15`。该分支不纳入 E021
+  之后的时序主线，也不叠加任何 picker/ROB 优化候选。
+- 已有 E029-R32 RTL
+  `3bc99500489ab67a8333db3a12b06773a47b1ffd` 已从 E021 实现 32-entry
+  ROB、5-bit physical index、6-bit sequence、4x8 picker/read hierarchy 和
+  23/13 BKPR threshold。不得重复同一实现。
+- E029-R32 本地 heavy/mid/sparse 为 `10337/11719/24969` cycles；E021
+  为 `6154/9932/25024`。R32 虽将通用 Yosys 全设计组合门代理约减半、
+  depth `65 -> 54`，但 heavy cycles 增加 `68.0%`，不能只凭面积或时序
+  改善判为高分。
+- E021 的 64-entry ring 直接用 sequence low bits 寻址。32/64/128 等
+  2 的幂容量可保持这种映射；40/48/56 等容量需要显式 modulo wrap，
+  因此先用等效 BKPR 容量代理筛选周期，只有存在总分潜力才实现真实
+  storage/index/selector，避免为低收益点引入额外环形指针逻辑。
+- 搜索目标是最高最终分数
+  `1 / (T^4 * Power * Area)`。所有候选先保持与 E021 相同配置、用例和
+  `0.4 ns` 时钟周期归因；本地 cycles 与通用 Yosys 只用于淘汰。最终
+  必须使用内网 DCG area/STA、PTPX watts 和完整性能用例 elapsed time。
+- 候选顺序：有效容量代理 `40/48/56`，E021 `64` 基线，以及 `128`
+  上界筛选。16-entry 小于当前 19-entry 安全 reserve，直接排除；大于
+  128 的容量在吞吐理论上限下无法合理覆盖 storage/selector 面积功耗，
+  除非 R128 实测出现反常的显著得分收益，否则不继续扩大。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
