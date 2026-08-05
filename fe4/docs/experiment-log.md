@@ -46,6 +46,26 @@
   单独运行时不承诺越过 E021 picker WNS。任一标准用例 cycles 变化即判
   功能/性能失败；综合后若目标路径、面积或功耗无净收益则不进入组合版。
 
+## E031-R64 内网结论
+
+- 结论：拒绝，不进入后续组合版本。虽然 clock-gating 路径改善为
+  `sched_idx_q -> res_now -> old_u_q ICG/E`、slack `-0.0256 ns`，但
+  全局 WNS、面积和违例数均劣于 E021。
+- 相对 E021：WNS `-0.1684 -> -0.1774 ns`，恶化 9.0 ps；面积
+  `31056 -> 31133`，增加 77（约 0.248%）；违例数 `10354 -> 10363`，
+  增加 9。
+- 新 worst path 回到 `rdy_q -> picker`：`u_rob/rdy_q_reg_8/Q ->
+  u_pick/sel_tgt[8] -> u_pick/pk_tgt_q_reg_2_2/D`，required `0.2871 ns`，
+  arrival `0.4645 ns`，slack `-0.1774 ns`。同组 `pk_idx_n`、`picked_n`
+  和 `sel_local_oh` 路径分别为 `-0.1765`、`-0.1760` 和 `-0.1737 ns`。
+- 独立 egress 路径 `sched_idx_q -> res_now -> egress/out_dat ->
+  lane_d_f.D` 已达到 `-0.1769 ns`；另有终点为 `u_fe3/o_data_out_reg_10`
+  的不可见全路径为 `-0.1719 ns`。因此即使只修 picker，egress/forward
+  路径也会立即成为下一组 WNS。
+- 该实现改善了局部 ROB/ICG cone，却因面积和逻辑重映射暴露并恶化
+  picker/egress 主路径，不能视为总时序优化。后续候选必须从 E021 的
+  精确 SHA 单独建分支，不允许在 E031-R64 上继续叠加。
+
 ## 配置
 
 | 配置 | REG_FEIN | WAKE_BYPASS | DUAL_STEAL | 用途 |
@@ -69,7 +89,7 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
-| E031-R64 | `aa33b5f6284e7f65fde048e6a9cba9d333d4fb80` | E021 + ROB fixed-order | 6154 | 9932 | 25024 | — | — | — | — | — | — | — | 待内网 STA/PPA；dep-heavy 11291 cycles，与 E021 四项完全一致；旧/new `peH` 通过空集、全 1、全部 single/two-bit 和 200k 随机状态等价检查；同流程 Yosys 273267→273093 cells（-174，-0.064%） |
+| E031-R64 | `aa33b5f6284e7f65fde048e6a9cba9d333d4fb80` | E021 + ROB fixed-order | 6154 | 9932 | 25024 | 0.2871 | 0.4645 | -0.1774 | 31133 | — | — | — | 拒绝：10363 条违例；worst `rdy_q -> pick/sel_tgt -> pk_tgt_q`；另有 `sched_idx_q -> res_now -> egress/lane_d_f` -0.1769 ns；clock-gating 改善到 -0.0256 ns，但相对 E021 WNS 恶化 9.0 ps、面积 +77、违例 +9；dep-heavy 11291 cycles，与 E021 四项完全一致；旧/new `peH` 等价检查通过 |
 
 ## 分支与提交约定
 
