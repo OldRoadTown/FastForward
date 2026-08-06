@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// RTL revision : 4FE-safe-v36
+// Experiment   : E037-R32-read-oh
+// Based on     : E029-R32 / 4FE-safe-v28
+// Changes      : derive safe read metadata from the selected physical one-hot
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -370,12 +370,41 @@ module ff_pick #(
                                       : page_h[2*AW:AW+1];
         assign sel_oh[gf]  = use_crit ? pec_h[D+2*AW:2*AW+1]
                                       : page_h[D+2*AW:2*AW+1];
-        assign sel_local_oh[gf] = use_crit
-                                  ? pec_h[D+2*AW+8:D+2*AW+1]
-                                  : page_h[D+2*AW+8:D+2*AW+1];
-        assign sel_bank_oh[gf]  = use_crit
-                                  ? pec_h[D+2*AW+16:D+2*AW+9]
-                                  : page_h[D+2*AW+16:D+2*AW+9];
+        if (D == 32) begin : g_r32_read_oh
+          // Derive the registered read coordinates from the already-required
+          // final physical one-hot.  This removes bank/local metadata outputs
+          // from peHoh without adding a binary decoder after sel_idx.
+          assign sel_bank_oh[gf] = {
+            4'b0,
+            |sel_oh[gf][31:24], |sel_oh[gf][23:16],
+            |sel_oh[gf][15:8],  |sel_oh[gf][7:0]
+          };
+          assign sel_local_oh[gf] = {
+            (sel_oh[gf][31] | sel_oh[gf][23])
+              | (sel_oh[gf][15] | sel_oh[gf][7]),
+            (sel_oh[gf][30] | sel_oh[gf][22])
+              | (sel_oh[gf][14] | sel_oh[gf][6]),
+            (sel_oh[gf][29] | sel_oh[gf][21])
+              | (sel_oh[gf][13] | sel_oh[gf][5]),
+            (sel_oh[gf][28] | sel_oh[gf][20])
+              | (sel_oh[gf][12] | sel_oh[gf][4]),
+            (sel_oh[gf][27] | sel_oh[gf][19])
+              | (sel_oh[gf][11] | sel_oh[gf][3]),
+            (sel_oh[gf][26] | sel_oh[gf][18])
+              | (sel_oh[gf][10] | sel_oh[gf][2]),
+            (sel_oh[gf][25] | sel_oh[gf][17])
+              | (sel_oh[gf][9] | sel_oh[gf][1]),
+            (sel_oh[gf][24] | sel_oh[gf][16])
+              | (sel_oh[gf][8] | sel_oh[gf][0])
+          };
+        end else begin : g_other_read_oh
+          assign sel_local_oh[gf] = use_crit
+                                    ? pec_h[D+2*AW+8:D+2*AW+1]
+                                    : page_h[D+2*AW+8:D+2*AW+1];
+          assign sel_bank_oh[gf]  = use_crit
+                                    ? pec_h[D+2*AW+16:D+2*AW+9]
+                                    : page_h[D+2*AW+16:D+2*AW+9];
+        end
         assign sec_fnd[gf] = 1'b0;
         assign sec_sel[gf] = {AW{1'b0}};
       end else begin : g_dual
