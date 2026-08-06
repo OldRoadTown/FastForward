@@ -16,6 +16,21 @@
 5. Area、Power、T 均齐全后再计算
    `score = 1 / (T^4 × Power × Area)`。
 6. 原始报告保存在内网归档中，归档目录名使用实验 ID 和完整 SHA。
+7. 修改前必须检索全部 Git 历史；相同流水化、ready-class 打拍、picked
+   位图复制或 target/read-select retime 不得重复提交。
+
+## 官方评估条件
+
+- DCG corner：`T7+ / H240 / ssgnp / 0.675 V / 125 C`。
+- 时钟周期由 `design/hdl/bes_cfg.csh` 设置，clock budget 为设置周期的
+  `0.9` 倍；周期与负载用例必须和内网综合保持一致。
+- 频率大于 1.5 GHz 时 ICG 额外 delay 为 50 ps，否则为 100 ps；clock
+  uncertainty 以同一份时序报告为准，周期小于 0.4 ns 时固定为 35 ps。
+- 功耗使用 PTPX 输出的瓦数；统一评分为
+  `score = 1 / (T^4 * Power * Area)`，其中 `T` 是官方混合负载的 elapsed
+  execution time，不是单个局部回归的周期数。
+- 官方负载为 41.7% / 90%，报文占比为 1 / 2；无反压时每 20000 cycle
+  分别注入 16680 和 36000 个报文。存在反压时注入比例保持不变。
 
 ## 配置
 
@@ -40,6 +55,21 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
+| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | ROB32 safe-v5，DUAL_STEAL=0 | 10337 | 11719 | 25028 | 0.2821 | -0.3470 | -0.0649 | 22101 | — | — | — | E021 基线的独立 32-entry ROB；物理组织为 4x8，不是 8x8 |
+| E039 | `abcda49` | ROB32 safe-v5，DUAL_STEAL=0 | 10337 | 11719 | 25028 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 同拍更新 `old_u_idx_q` shadow，picker 从独立 Q 读取 `rbase`；不增加 issue/FE 周期 |
+
+## E039 实施审计
+
+- E030 的 4x16 P0/P1、AB-P8 的 8x8 pipeline 已存在，E039 没有重复插入
+  picker pipeline，也没有修改最终 `pk_*` 的 issue 边界。
+- E032 的 ready-class bitmap 打拍已被综合拒绝，原因是 `picked_q` 反馈
+  扇出使 WNS 恶化；E039 不复制 ready bitmap，不把 `picked_q` 重新送入
+  class selector。
+- E039 在 ROB 中用与 `old_u_q` 完全相同的 `old_u_n` 同拍更新 5-bit
+  `old_u_idx_q`，只将 picker 的 `rbase` 起点从该 shadow Q 接入。它是
+  fanout/register-duplication 候选，不是增加一级架构流水。
+- 仅当官方 cycles 不增加、picker 目标路径改善且 Area/PTPX Power 的增量
+  没有抵消时序收益，才允许进入组合版本；否则保留 E029 为基线。
 
 ## 分支与提交约定
 
