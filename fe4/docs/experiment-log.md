@@ -40,6 +40,8 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
+| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 25028 | — | — | — | 22101 | — | — | — | E021 基线的独立 32-entry ROB；内网综合违例 5625 条，有效最差 slack -0.0649 ns；clock-gating 路径 slack -0.0100 ns。|
+| E037 | pending | rob32-read-oh | 10337 | 11719 | 25028 | pending | pending | pending | pending | pending | pending | pending | 从 E029 独立验证；保留 `sel_oh` 作为 picked commit bitmap，同时用固定分组 OR 生成 bank/local read metadata，删除 `peHoh` 到 metadata 寄存器的重复输出锥。picker Yosys 代理 `11188→10618 cells`（-5.1%），功能与 cycles 不变；等待内网 DCG STA/PTPX。|
 
 ## 分支与提交约定
 
@@ -53,5 +55,7 @@
   `pk_idx_q → picked → next-pick/old_u`，并去除 crit/outp 的逐位 ICG 使能。
 - `timing/4fe-safe-selector-v5`：从 safe-v4 创建，精简 safe 模式的
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
+- `ab/4fe-rob32-readoh-v36`：从 E029 的 `3bc9950` 独立创建；E037
+  只改 safe picker 的 read metadata 生成，不改变 ROB 深度、流水边界或 issue 周期。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
