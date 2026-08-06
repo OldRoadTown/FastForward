@@ -1,18 +1,18 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v38
+// Experiment   : E038-R32-single-steal
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// Changes      : keep E029 safe primary selection; register one steal candidate
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
 // waiting on (critical) jumps the queue (unless the age-oldest candidate is
 // the very window head). If a class has a backlog (2nd candidate) while
-// another FE is idle, the idle FE may steal it. DUAL_STEAL=0 disables both
-// matchers for the timing-safe profile; DUAL_STEAL=1 enables both matchers in
-// the throughput/full profiles.
+// another FE is idle, SINGLE_STEAL enables one registered steal matcher while
+// retaining the safe primary selector. DUAL_STEAL retains the older parity
+// based throughput profile with two matchers.
 // gated by exact output-slot conflict checks against the ff_sched booking.
 // rob_src records the FE each entry was issued to (result routing).
 // =============================================================================
@@ -22,6 +22,7 @@ module ff_pick #(
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0,
+  parameter SINGLE_STEAL = 0,
   parameter REG_FEIN    = 0    // steal bookkeeping assumes issue = pick+1:
                                // with REG_FEIN (pick+2) stealing is disabled
 )(
@@ -341,6 +342,10 @@ module ff_pick #(
   wire [7:0]     sel_local_oh [0:NFE-1];
   wire [NFE-1:0] sec_fnd;
   wire [AW-1:0]  sec_sel [0:NFE-1];
+  wire [D-1:0]   sec_oh [0:NFE-1];
+  wire [AW-1:0]  sec_tgt [0:NFE-1];
+  wire [7:0]     sec_bank_oh [0:NFE-1];
+  wire [7:0]     sec_local_oh [0:NFE-1];
 
   genvar gf;
   generate
@@ -376,8 +381,26 @@ module ff_pick #(
         assign sel_bank_oh[gf]  = use_crit
                                   ? pec_h[D+2*AW+16:D+2*AW+9]
                                   : page_h[D+2*AW+16:D+2*AW+9];
-        assign sec_fnd[gf] = 1'b0;
-        assign sec_sel[gf] = {AW{1'b0}};
+        if (SINGLE_STEAL != 0) begin : g_single_sec
+          // The secondary search is a side cone ending at the secondary
+          // registers.  The primary candidate remains selected by page_h /
+          // pec_h exactly as in E029.
+          wire [D+2*AW+17:0] sec_h =
+            peHoh(cand & ~sel_oh[gf], rbase, rob_tgt_f);
+          assign sec_fnd[gf]      = sec_h[AW];
+          assign sec_sel[gf]      = sec_h[AW-1:0];
+          assign sec_tgt[gf]      = sec_h[2*AW:AW+1];
+          assign sec_oh[gf]       = sec_h[D+2*AW:2*AW+1];
+          assign sec_local_oh[gf] = sec_h[D+2*AW+8:D+2*AW+1];
+          assign sec_bank_oh[gf]  = sec_h[D+2*AW+16:D+2*AW+9];
+        end else begin : g_no_single_sec
+          assign sec_fnd[gf]      = 1'b0;
+          assign sec_sel[gf]      = {AW{1'b0}};
+          assign sec_tgt[gf]      = {AW{1'b0}};
+          assign sec_oh[gf]       = {D{1'b0}};
+          assign sec_local_oh[gf] = 8'b0;
+          assign sec_bank_oh[gf]  = 8'b0;
+        end
       end else begin : g_dual
         // Dual/full profiles retain two parity candidates for work stealing.
         wire [AW:0]  pee  = peH(cand & mask_age_even, rbase);
@@ -402,6 +425,10 @@ module ff_pick #(
         assign sel_local_oh[gf] = 8'b0;
         assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
         assign sec_sel[gf] = sec[AW-1:0];
+        assign sec_tgt[gf] = {AW{1'b0}};
+        assign sec_oh[gf] = {D{1'b0}};
+        assign sec_local_oh[gf] = 8'b0;
+        assign sec_bank_oh[gf] = 8'b0;
       end
     end
   endgenerate
@@ -428,17 +455,26 @@ module ff_pick #(
   // -------------------------------------------------------------------------
   reg [NFE-1:0] sec_v_q;
   reg [AW-1:0]  sec_idx_q [0:NFE-1];
+  reg [D-1:0]   sec_oh_q [0:NFE-1];
+  reg [AW-1:0]  sec_tgt_q [0:NFE-1];
+  reg [7:0]     sec_bank_oh_q [0:NFE-1];
+  reg [7:0]     sec_local_oh_q [0:NFE-1];
   integer f;
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) sec_v_q <= {NFE{1'b0}};
     else        sec_v_q <= sec_fnd;
   end
   always @(posedge clk) begin
-    for (f = 0; f < NFE; f = f + 1)
+    for (f = 0; f < NFE; f = f + 1) begin
       // sec_v_q qualifies sec_idx_q, so the index is don't-care when no
       // secondary exists. Unconditional writes prevent a long pick condition
       // from being implemented as an ICG enable path for these small controls.
       sec_idx_q[f] <= sec_sel[f];
+      sec_oh_q[f] <= sec_oh[f];
+      sec_tgt_q[f] <= sec_tgt[f];
+      sec_bank_oh_q[f] <= sec_bank_oh[f];
+      sec_local_oh_q[f] <= sec_local_oh[f];
+    end
   end
 
   reg [NFE-1:0] don_ok;
@@ -476,7 +512,8 @@ module ff_pick #(
     // Stealing assumes issue = pick+1 for its slot bookkeeping.  The E004
     // timing-safe profile also disables it to remove lane-to-lane picker
     // feedback; DUAL_STEAL=1 preserves both matchers for throughput A/B.
-    st1_v = st1_dv & st1_rv & (REG_FEIN == 0) & (DUAL_STEAL != 0);
+    st1_v = st1_dv & st1_rv & (REG_FEIN == 0)
+            & ((DUAL_STEAL != 0) || (SINGLE_STEAL != 0));
 
     // matcher 2: donor scanned 0->3 (must differ), receiver scanned 3->0
     st2_dv = 1'b0; st2_dc = 2'd0; st2_didx = {AW{1'b0}};
@@ -533,6 +570,10 @@ module ff_pick #(
         for (sf = 0; sf < NFE; sf = sf + 1) begin
           pk_bank_oh_n[sf]  = sel_bank_oh[sf];
           pk_local_oh_n[sf] = sel_local_oh[sf];
+          if ((SINGLE_STEAL != 0) && st1_v && (st1_rr == sf[1:0])) begin
+            pk_bank_oh_n[sf]  = sec_bank_oh_q[st1_dc];
+            pk_local_oh_n[sf] = sec_local_oh_q[st1_dc];
+          end
         end
       end
     end else begin : g_dual_read_sel
@@ -557,8 +598,11 @@ module ff_pick #(
     if (DUAL_STEAL == 0) begin : g_safe_tgt
       integer tf;
       always @* begin
-        for (tf = 0; tf < NFE; tf = tf + 1)
+        for (tf = 0; tf < NFE; tf = tf + 1) begin
           pk_tgt_n[tf] = sel_tgt[tf];
+          if ((SINGLE_STEAL != 0) && st1_v && (st1_rr == tf[1:0]))
+            pk_tgt_n[tf] = sec_tgt_q[st1_dc];
+        end
       end
     end else begin : g_dual_tgt
       integer tf;
@@ -576,7 +620,12 @@ module ff_pick #(
       always @* begin
         picked_n = {D{1'b0}};
         for (pf = 0; pf < NFE; pf = pf + 1)
-          if (pk_v_n[pf]) picked_n = picked_n | sel_oh[pf];
+          if (pk_v_n[pf]) begin
+            if ((SINGLE_STEAL != 0) && st1_v && (st1_rr == pf[1:0]))
+              picked_n = picked_n | sec_oh_q[st1_dc];
+            else
+              picked_n = picked_n | sel_oh[pf];
+          end
       end
     end else begin : g_dual_picked
       integer pf;

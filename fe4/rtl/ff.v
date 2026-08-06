@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v38
+// Experiment   : E038-R32-single-steal
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
+// Changes      : retain E029's safe primary picker and add one registered steal
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -35,7 +35,8 @@
 module ff #(
   parameter REG_FEIN    = 0,
   parameter WAKE_BYPASS = 0,
-  parameter DUAL_STEAL  = 0
+  parameter DUAL_STEAL  = 0,
+  parameter SINGLE_STEAL = 1
 )(
   input  wire         clk,
   input  wire         rst_n,
@@ -177,7 +178,7 @@ module ff #(
 
   ff_pick #(.D(D), .AW(AW), .NFE(NFE),
             .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
-            .DUAL_STEAL(DUAL_STEAL)) u_pick (
+            .DUAL_STEAL(DUAL_STEAL), .SINGLE_STEAL(SINGLE_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
