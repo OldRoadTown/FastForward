@@ -2,10 +2,11 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v39
+// Experiment   : E039-R32-rbase-shadow
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries and scale safe BKPR limits
+// Changes      : retain E029's 4x8 ROB and isolate picker rbase fanout with
+//                an equivalent same-cycle physical-index register
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -59,6 +60,7 @@ module ff_rob #(
   output wire [SW-1:0]       alloc_seq_o,
   output wire [SW-1:0]       out_seq_o,
   output wire [SW-1:0]       old_u_o,
+  output wire [AW-1:0]       old_u_idx_o,
   output reg                 bkpr_r         // registered BKPR
 );
 
@@ -194,6 +196,9 @@ module ff_rob #(
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
+  // Same-cycle shadow of old_u_q's physical index. It has identical state
+  // semantics, but gives the high-fanout picker a dedicated register Q.
+  reg [AW-1:0] old_u_idx_q;
 
   // -------------------------------------------------------------------------
   // result decode + wake-up
@@ -300,6 +305,7 @@ module ff_rob #(
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
       old_u_q     <= {SW{1'b0}};
+      old_u_idx_q <= {AW{1'b0}};
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
@@ -321,6 +327,7 @@ module ff_rob #(
       alloc_seq_q <= alloc_seq_q + {{(SW-3){1'b0}}, acnt};
       out_seq_q   <= out_seq_q + {{(SW-3){1'b0}}, pop_cnt};
       old_u_q     <= old_u_n;
+      old_u_idx_q <= old_u_n[AW-1:0];
     end
   end
 
@@ -361,5 +368,6 @@ module ff_rob #(
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;
+  assign old_u_idx_o = old_u_idx_q;
 
 endmodule

@@ -1,10 +1,11 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v39
+// Experiment   : E039-R32-rbase-shadow
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
+// Changes      : retain E029's 4x8 ROB and isolate picker rbase fanout with
+//                an equivalent same-cycle physical-index register
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -115,6 +116,7 @@ module ff #(
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
   wire [SW-1:0]       alloc_seq, out_seq, old_u;
+  wire [AW-1:0]       old_u_idx;
 
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
@@ -172,6 +174,7 @@ module ff #(
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
+    .old_u_idx_o(old_u_idx),
     .bkpr_r(pkt_in_bkpr)
   );
 
@@ -181,7 +184,7 @@ module ff #(
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
-    .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
+    .rbase(old_u_idx), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
