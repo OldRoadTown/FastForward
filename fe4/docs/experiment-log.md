@@ -40,6 +40,8 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
+| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | ROB32 safe-v5，DUAL_STEAL=0，SINGLE_STEAL=0 | 10337 | 11719 | 25028 | 0.2821 | -0.3470 | -0.0649 | 22101 | — | — | — | E029 基线；worst `old_u_q[4] → rbase → sel_local_oh[14] → pk_bank_oh_reg[0][2]`；clock-gating slack -0.0100 ns |
+| E038 | `8626632` | ROB32 safe-v5，DUAL_STEAL=0，SINGLE_STEAL=1 | 10250 | 11689 | 25028 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 从 E029 保留 safe 主选择；每个 latency class 计算并寄存第二候选的 index/target/onehot 元数据；下一周期最多向空闲 FE 偷取一个 secondary。短/中/重载及 60k、90% DEPHEAVY（seed 29/31）通过；200k 用例超过本地 16-bit 序号检查器的可辨识范围，不作为 RTL 失败依据 |
 
 ## 分支与提交约定
 
@@ -53,5 +55,8 @@
   `pk_idx_q → picked → next-pick/old_u`，并去除 crit/outp 的逐位 ICG 使能。
 - `timing/4fe-safe-selector-v5`：从 safe-v4 创建，精简 safe 模式的
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
+- `ab/4fe-rob32-single-steal-v38`：严格从 E029 的 `3bc9950` 创建，保留
+  safe 主 picker，仅增加一条寄存式 secondary steal 路径；不回写 ROB 深度
+  搜索主线，也不纳入之前的 ROB32 迭代分支。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
