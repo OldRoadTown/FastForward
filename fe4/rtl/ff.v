@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v20
-// Experiment   : E021-N1
-// Based on     : 4FE-safe-v15 / E016-N1
-// Changes      : use fixed-order one-hot bank selection in the safe picker
+// RTL revision : 4FE-safe-v40
+// Experiment   : E040-E021-two-stage-predict
+// Based on     : 4FE-safe-v20 / E021-N1
+// Changes      : predictive 8x8 local metadata P0 plus global-select P1
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns
 //
@@ -16,8 +16,9 @@
 //               (+ critical-target marking info)
 //   ff_rob      ROB storage/state (+critical flags), wake-up, counters,
 //               oldest pointer, BKPR
-//   ff_pick     I0: per-class dual pick (parity PEs) + critical-first
-//               priority + work stealing (<=2/cycle) + rob_src record
+//   ff_pick     P0 local 8x8 candidate snapshot + P1 global pick
+//               (parity PEs) + critical-first priority + work stealing
+//               (<=2/cycle) + rob_src record
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
 //   ff_sched    per-FE 4-slot result scheduler (exact output-slot booking)
 //   FE x4        integrated forwarding engines

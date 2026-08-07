@@ -65,9 +65,10 @@ module ff_rob #(
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
   //  * occupancy   : entry reuse (seq n overwrites n-64):  (D-1)-8      = 55
-  //  * issue window: retained-result overwrite hazard   : (D-7)-8-lag   = 45
+  //  * issue window: predictive picker keeps one extra in-flight slot:
+  //                 (D-7)-8-lag + 2                           = 47
   localparam [SW-1:0] OCC_TH = 55;
-  localparam [SW-1:0] WIN_TH = 45;
+  localparam [SW-1:0] WIN_TH = 47;
 
   function [3:0] pe8;
     input [7:0] v;
