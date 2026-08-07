@@ -29,6 +29,20 @@
 | safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 
+## DCG 环境与评分约束
+
+- 工艺环境：`T7+ / H240 / ssgnp / 0.675V / 125C`。
+- 时钟周期由 `design/hdl/bes_cfg.csh` 设置；综合与性能用例使用同一设置。
+- clock budget 为 `0.9 × clock_period`。频率 `>1.5GHz` 时额外扣除
+  `50ps` ICG delay，否则扣除 `100ps`；clock uncertainty 按时序报告记录，
+  周期 `<0.4ns` 时固定为 `35ps`。
+- ICG 必须使用工艺库支持的 instance，并同步更新 `rtl_sim.f` 中的库文件。
+- 不限制 LVT/ULVT 比例；功耗以 PTPX 输出的瓦数计入评分。
+- 官方两个用例使用相同种子和负载分布：`41.7%` 负载占 `1/3` 报文，
+  `90%` 负载占 `2/3` 报文。存在反压时保持报文比例，但阶段 cycle 数不必等分。
+- 评分目标为 `1 / (T^4 × Power × Area)`；其中 `T` 是统一性能用例的
+  实际 elapsed execution time，不是局部仿真的单个周期数。
+
 ## 结果
 
 | ID | RTL SHA | 配置 | 重载 cycles | 中载 cycles | 稀疏 cycles | Required (ns) | Arrival (ns) | Slack (ns) | Area | Power | 统一用例 T | Score | Worst path / 备注 |
@@ -40,6 +54,38 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
+| E040 | `490cdf8` (`c30a55d9` 基线) | safe-v5 | 6269 | 9933 | — | 待内网 | 待内网 | 待内网 | 待内网 | 待内网 | 待内网 | 待内网 | E021 独立分支；P0 8×8 局部 first/second winner + target/local one-hot 元数据寄存，P1 做全局 circular select；`wake_now` 纳入 P0 预测；`WIN_TH=47`。稀疏长用例尚未重新执行 |
+
+## E040 变更与查重
+
+E040 从 E021 提交 `c30a55d9d21faea805f500ddc8497ed70322ed15` 单独开枝，
+不修改 E021 主线或历史迭代分支。实现目标是把 picker 的候选生成和全局选择
+拆成 P0/P1 两个时序边界：P0 在八个 8-entry bank 内预计算两个候选，并把
+`valid/index/target/bank-one-hot/local-one-hot` 作为同一事务寄存；P1 只做
+消费校验、环形 bank 顺序选择和 payload mux。`wake_now` 用于生成下一拍可见的
+ready candidate，保持数据与目标元数据对齐。该预测会增加寄存器和选择元数据，
+因此最终是否值得采用必须由 DCG 的 STA、Area、PTPX Power 和官方 T 联合判断。
+
+历史查重结论：E030 (`ab82ae6`) 已做 4×16 P0/P1 流水化，AB-P8
+(`d9752e6`) 已做 8×8 P0/P1 流水化，E032 (`5e5e322`) 已做 ready-class
+打拍且因 `picked_q` 扇出导致时序恶化；E040 保留同一研究方向，但改为 bank-local
+双候选、完整元数据随拍和 `picked` one-hot stale 校验，不直接复制这些实验。
+ROB32/48/56 与 target retime、ROB read-select retime 等也已检查，本次不重复修改。
+
+本地 Verilator 回归（`REG_FEIN=0, WAKE_BYPASS=0, DUAL_STEAL=0`）结果：
+
+| 用例 | cycles | 结果 |
+|---|---:|---|
+| quick 100%, 500 packets, seed 3 | 167 | PASS |
+| quick 50%, 500 packets, seed 4 | 268 | PASS |
+| quick 20%, 500 packets, seed 5 | 594 | PASS |
+| mid 50%, 20000 packets, seed 11 | 9933 | PASS |
+| heavy 100%, 20000 packets, seed 7 | 6269 | PASS |
+| dependency-heavy, 90%, 60000 packets, seed 17 | 34342 | PASS |
+
+E040 的 `WIN_TH=49` 对照在官方重载为 `6270` cycles，略差于 `WIN_TH=47`
+的 `6269`，所以保留 `47`。当前尚无 DCG 综合、PTPX 功耗、面积、worst path
+和官方 elapsed `T`，不能据本地 cycles 单独宣称得分提升。
 
 ## 分支与提交约定
 
@@ -53,5 +99,7 @@
   `pk_idx_q → picked → next-pick/old_u`，并去除 crit/outp 的逐位 ICG 使能。
 - `timing/4fe-safe-selector-v5`：从 safe-v4 创建，精简 safe 模式的
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
+- `ab/4fe-e021-two-stage-predict-v40`：从 E021 独立创建的 E040 候选，
+  只用于与 E021/E029 的内网 STA、PTPX 和官方性能用例做 A/B，不纳入主线迭代。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
