@@ -1,19 +1,19 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the in-order data-read window from 64 to 32 entries
+// RTL revision : 4FE-safe-v42
+// Experiment   : E042-R64-IQ32
+// Based on     : 4FE-safe-v28 / E029-R32
+// Changes      : restore the 64-entry in-order data-read window
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
 // arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
 // =============================================================================
 module ff_egress #(
-  parameter D   = 32,
-  parameter AW  = 5,
-  parameter SW  = 6,
+  parameter D   = 64,
+  parameter AW  = 6,
+  parameter SW  = 7,
   parameter NFE = 4
 )(
   input  wire                clk,

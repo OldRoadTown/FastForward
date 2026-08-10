@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
+// RTL revision : 4FE-safe-v42
+// Experiment   : E042-R64-IQ32
+// Based on     : 4FE-safe-v28 / E029-R32
+// Changes      : decouple a 64-entry storage ROB from a 32-entry issue queue
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -16,10 +16,10 @@
 // Top level flattens/unflattens ports and instantiates the stages:
 //   ff_ingress  S0/S1: PKTIN registers, compaction, dependency resolve, alloc
 //               (+ critical-target marking info)
-//   ff_rob      ROB storage/state (+critical flags), wake-up, counters,
-//               oldest pointer, BKPR
-//   ff_pick     I0: per-class dual pick (parity PEs) + critical-first
-//               priority + work stealing (<=2/cycle) + rob_src record
+//   ff_rob      64-entry storage/result/retirement state, counters and BKPR
+//   ff_iq       32-entry scheduling descriptors, wake-up and free-list alloc
+//   ff_iq_pick  I0: order-matrix oldest masks + critical-first + optional
+//               work stealing (<=2/cycle) + ROB-source record
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
 //   ff_sched    per-FE 4-slot result scheduler (exact output-slot booking)
 //   FE x4        integrated forwarding engines
@@ -27,8 +27,8 @@
 //
 // Architecture summary (details in docs/design_spec.md):
 //   4 FEs, primary latency-class binding + work stealing with exact
-//   output-slot bookkeeping, 32-entry unified-storage ROB, out-of-order
-//   issue / in-order output, pre-wake (dependent enters the FE in the same
+//   output-slot bookkeeping, 64-entry storage ROB + 32-entry issue queue,
+//   out-of-order issue / in-order output, pre-wake (dependent enters the FE in the same
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
 // =============================================================================
@@ -68,9 +68,11 @@ module ff #(
   output wire         pkt_in_bkpr
 );
 
-  localparam D   = 32;
-  localparam AW  = 5;
-  localparam SW  = 6;
+  localparam D   = 64;
+  localparam AW  = 6;
+  localparam SW  = 7;
+  localparam QD  = 32;
+  localparam QAW = 5;
   localparam NFE = 4;
 
   // -------------------------------------------------------------------------
@@ -116,6 +118,14 @@ module ff #(
   wire [D*AW-1:0]     rob_tgt_f;
   wire [SW-1:0]       alloc_seq, out_seq, old_u;
 
+  wire [QD-1:0]       iq_v, iq_rdy, iq_crit, iq_wake;
+  wire [QD*AW-1:0]    iq_rob_f, iq_tgt_f;
+  wire [QD*2-1:0]     iq_lat_f;
+  wire [QD*QD-1:0]    iq_older_f;
+  wire [QAW:0]        iq_count, iq_count_n;
+  wire                iq_over_n;
+  wire [QD-1:0]       picked_iq;
+  wire [2:0]          picked_count;
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
   wire [NFE*AW-1:0]   pk_idx_f;
@@ -164,7 +174,7 @@ module ff #(
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
     .fe_od_f(fe_od_f),
-    .picked(picked), .rob_src_f(rob_src_f),
+    .picked(picked), .rob_src_f(rob_src_f), .iq_over(iq_over_n),
     .pop_oh(pop_oh), .pop_cnt(pop_cnt),
     .res_now_o(res_now), .res_pred_o(res_pred), .res_known_o(res_known),
     .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
@@ -175,14 +185,30 @@ module ff #(
     .bkpr_r(pkt_in_bkpr)
   );
 
-  ff_pick #(.D(D), .AW(AW), .NFE(NFE),
-            .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
-            .DUAL_STEAL(DUAL_STEAL)) u_pick (
+  ff_iq #(.QD(QD), .QAW(QAW), .RAW(AW)) u_iq (
     .clk(clk), .rst_n(rst_n),
-    .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
-    .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
+    .acnt(acnt), .alloc_seq(alloc_seq),
+    .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
+    .slot_isdep(slot_isdep),
+    .kw_vld(kw_vld), .k_tgt_f(k_tgt_f), .res_pred(res_pred),
+    .res_known(res_known),
+    .picked_iq(picked_iq), .picked_count(picked_count),
+    .iq_v_o(iq_v), .iq_rdy_o(iq_rdy), .iq_crit_o(iq_crit),
+    .iq_wake_o(iq_wake), .iq_rob_f(iq_rob_f),
+    .iq_lat_f(iq_lat_f), .iq_tgt_f(iq_tgt_f), .iq_older_f(iq_older_f),
+    .iq_count(iq_count), .iq_count_n(iq_count_n), .iq_over_n(iq_over_n)
+  );
+
+  ff_iq_pick #(.QD(QD), .QAW(QAW), .RD(D), .RAW(AW), .NFE(NFE),
+               .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
+               .DUAL_STEAL(DUAL_STEAL)) u_pick (
+    .clk(clk), .rst_n(rst_n),
+    .iq_v(iq_v), .iq_rdy(iq_rdy), .iq_crit(iq_crit), .iq_wake(iq_wake),
+    .iq_rob_f(iq_rob_f), .iq_lat_f(iq_lat_f), .iq_tgt_f(iq_tgt_f),
+    .iq_older_f(iq_older_f),
     .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
-    .picked(picked), .pk_v_q(pk_v_q),
+    .picked_iq(picked_iq), .picked_count(picked_count),
+    .picked_rob(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f), .rob_src_f(rob_src_f)

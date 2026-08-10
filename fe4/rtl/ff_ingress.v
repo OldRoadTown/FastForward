@@ -2,18 +2,18 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : use 5-bit physical indexes and 6-bit sequence numbers for R32
+// RTL revision : 4FE-safe-v42
+// Experiment   : E042-R64-IQ32
+// Based on     : 4FE-safe-v28 / E029-R32
+// Changes      : use 6-bit storage tags and 7-bit sequence numbers
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
 // =============================================================================
 module ff_ingress #(
-  parameter D  = 32,
-  parameter AW = 5,
-  parameter SW = 6
+  parameter D  = 64,
+  parameter AW = 6,
+  parameter SW = 7
 )(
   input  wire            clk,
   input  wire            rst_n,
