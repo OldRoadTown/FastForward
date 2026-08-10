@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce packet/dependency reads from 64 entries to 32 entries
+// RTL revision : 4FE-safe-v41
+// Experiment   : E041-R32-entry-onehot
+// Based on     : E029-R32 / 4FE-safe-v28
+// Changes      : read packet data from the I0-registered physical one-hot
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -29,8 +29,7 @@ module ff_issue #(
   input  wire [NFE*AW-1:0]       pk_idx_f,
   input  wire [NFE*AW-1:0]       pk_tgt_f,
   input  wire [NFE*2-1:0]        pk_lat_f,
-  input  wire [NFE*8-1:0]        pk_bank_oh_f,
-  input  wire [NFE*8-1:0]        pk_local_oh_f,
+  input  wire [NFE*D-1:0]        pk_entry_oh_f,
   // ROB read view
   input  wire [D*128-1:0]        rob_data_f,
   input  wire [D*2-1:0]          rob_src_f,     // FE each entry was issued to
@@ -57,8 +56,7 @@ module ff_issue #(
   wire [AW-1:0] pk_idx   [0:NFE-1];
   wire [AW-1:0] pk_tgt   [0:NFE-1];
   wire [1:0]    pk_lat   [0:NFE-1];
-  wire [7:0]    pk_bank_oh [0:NFE-1];
-  wire [7:0]    pk_local_oh [0:NFE-1];
+  wire [D-1:0]  pk_entry_oh [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
@@ -70,8 +68,7 @@ module ff_issue #(
       assign pk_idx[gi] = pk_idx_f[gi*AW +: AW];
       assign pk_tgt[gi] = pk_tgt_f[gi*AW +: AW];
       assign pk_lat[gi] = pk_lat_f[gi*2 +: 2];
-      assign pk_bank_oh[gi] = pk_bank_oh_f[gi*8 +: 8];
-      assign pk_local_oh[gi] = pk_local_oh_f[gi*8 +: 8];
+      assign pk_entry_oh[gi] = pk_entry_oh_f[gi*D +: D];
     end
   endgenerate
 
@@ -87,20 +84,17 @@ module ff_issue #(
       wire [127:0] bank_data [0:3];
       for (gb = 0; gb < 4; gb = gb + 1) begin : g_bank_read
         assign bank_data[gb] =
-          (rob_data[gb*8+0] & {128{pk_local_oh[gf][0]}})
-        | (rob_data[gb*8+1] & {128{pk_local_oh[gf][1]}})
-        | (rob_data[gb*8+2] & {128{pk_local_oh[gf][2]}})
-        | (rob_data[gb*8+3] & {128{pk_local_oh[gf][3]}})
-        | (rob_data[gb*8+4] & {128{pk_local_oh[gf][4]}})
-        | (rob_data[gb*8+5] & {128{pk_local_oh[gf][5]}})
-        | (rob_data[gb*8+6] & {128{pk_local_oh[gf][6]}})
-        | (rob_data[gb*8+7] & {128{pk_local_oh[gf][7]}});
+          (rob_data[gb*8+0] & {128{pk_entry_oh[gf][gb*8+0]}})
+        | (rob_data[gb*8+1] & {128{pk_entry_oh[gf][gb*8+1]}})
+        | (rob_data[gb*8+2] & {128{pk_entry_oh[gf][gb*8+2]}})
+        | (rob_data[gb*8+3] & {128{pk_entry_oh[gf][gb*8+3]}})
+        | (rob_data[gb*8+4] & {128{pk_entry_oh[gf][gb*8+4]}})
+        | (rob_data[gb*8+5] & {128{pk_entry_oh[gf][gb*8+5]}})
+        | (rob_data[gb*8+6] & {128{pk_entry_oh[gf][gb*8+6]}})
+        | (rob_data[gb*8+7] & {128{pk_entry_oh[gf][gb*8+7]}});
       end
       wire [127:0] packet_data =
-          (bank_data[0] & {128{pk_bank_oh[gf][0]}})
-        | (bank_data[1] & {128{pk_bank_oh[gf][1]}})
-        | (bank_data[2] & {128{pk_bank_oh[gf][2]}})
-        | (bank_data[3] & {128{pk_bank_oh[gf][3]}});
+          bank_data[0] | bank_data[1] | bank_data[2] | bank_data[3];
       // pk_tgt was read and registered beside pk_idx in I0.  The I1 FE-input
       // path therefore contains only the target-data read, not two cascaded
       // 32-entry muxes (packet->target followed by target->data).
