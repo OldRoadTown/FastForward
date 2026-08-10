@@ -9,6 +9,8 @@
 > E029-R32 分支说明：本分支把 ROB 改为 32 项、picker 改为 4×8，
 > BKPR 阈值改为 23/13。下文的 64 项吞吐数据保留作 E021 历史基线；
 > E029 的本地代理与待测统一用例 T 见 `experiment-log.md`。
+> E041 在独立分支上保持上述流水和选择语义，仅把 I0/I1 之间的
+> bank/local 坐标改为最终 32-bit physical entry one-hot。
 
 ---
 

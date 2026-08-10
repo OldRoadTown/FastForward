@@ -29,6 +29,7 @@
 | safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
+| rob32-entry-oh | 0 | 0 | 0 | E041：I0/I1 直接传递最终 32-bit entry one-hot |
 
 ## 结果
 
@@ -41,7 +42,8 @@
 | E004 | `b739c885fb2bd595560b5ec0c9233fd4709a0b79` | safe-v3 | 6154 | 9932 | 24963 | 0.2833 | 0.6674 | -0.3841 | — | — | — | — | worst `pick/pk_idx_q[3] → picked → rob/old_u`；同组 `pick → pk_idx_n` 三条约 -0.3839 ns；另有 `sched/res_now → rob/outp_q ICG/E` -0.0532 ns、`ingress/k_tgt → rob/crit_q ICG/E` -0.0515 ns |
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
-| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
+| E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 25028 | 0.2821 | 0.3470 | -0.0649 | 22101 | — | — | — | ROB32 V28 基线；5625 条违例；worst `old_u_q[4] → rbase → sel_local_oh[14] → pk_bank_oh_reg[0][2]`；clock-gating slack -0.0100 ns。 |
+| E041 | `3556a34d82e5fee275011ba712c7150b85d73791` | rob32-entry-oh | 10337 | 11719 | 25028 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待内网综合 | 待统一用例 | 待统一用例 | 从 E029/V28 原分支独立派生；删除 picker 的 bank/local 并行输出锥，在 I0 直接寄存最终 physical entry one-hot，I1 用每项低扇出选择读取数据，不增加流水级。safe/dual/full cycles 与 V28 完全一致；60k、90% DEPHEAVY seed 29/31 通过。相同 Yosys 命令下 picker 抽取门 `11196→10545`（-5.8%）、mapped cells `16064→15108`（-6.0%）；issue 抽取门 `67692→65644`（-3.0%）、mapped cells `105378→99222`（-5.8%）；两模块通用最长拓扑深度仍为 29/12，必须以 DCG 的 WNS 和最终 `T` 判定保留。 |
 
 ## 分支与提交约定
 
@@ -57,5 +59,7 @@
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
 - `timing/4fe-rob32-v28`：从 E021 创建的 E029 独立实验；ROB 32 项、
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
+- `codex/4fe-rob32-entry-onehot-v41`：直接从原 E029/V28 分支创建；
+  E041 只改 I0/I1 选择元数据边界，不改变 ROB 深度或 issue 周期。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
