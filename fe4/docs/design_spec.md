@@ -5,6 +5,10 @@
 > 参数：`REG_FEIN`（FEIN 加寄存级）、`WAKE_BYPASS`（预测唤醒是否
 > 直通当拍 pick）、`DUAL_STEAL`（是否启用第二偷取匹配器）。
 > 内网综合默认：`REG_FEIN=0, WAKE_BYPASS=0, DUAL_STEAL=0`。
+>
+> E029/V28 基线把 ROB 改为 32 项、picker 改为 4×8，BKPR 阈值改为
+> 23/13。E041 候选保持该流水和选择语义，只把 I0/I1 之间的 bank/local
+> 坐标改为最终 32-bit physical entry one-hot；结果见 `experiment-log.md`。
 
 ---
 
