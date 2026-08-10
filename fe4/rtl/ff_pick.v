@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// RTL revision : 4FE-safe-v41
+// Experiment   : E041-R32-entry-onehot
+// Based on     : E029-R32 / 4FE-safe-v28
+// Changes      : carry the selected physical one-hot across I0/I1 directly
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -39,8 +39,7 @@ module ff_pick #(
   output wire [NFE*AW-1:0]   pk_idx_f,
   output wire [NFE*AW-1:0]   pk_tgt_f,     // target index, I0-retimed for I1
   output wire [NFE*2-1:0]    pk_lat_f,
-  output wire [NFE*8-1:0]    pk_bank_oh_f,
-  output wire [NFE*8-1:0]    pk_local_oh_f,
+  output wire [NFE*D-1:0]    pk_entry_oh_f,
   output wire [D*2-1:0]      rob_src_f     // FE each entry was issued to
 );
 
@@ -170,12 +169,13 @@ module ff_pick #(
     end
   endfunction
 
-  // Safe-profile hierarchical selector returning the physical one-hot, the
-  // selected entry's target payload, binary index, and the already-known
-  // bank/local one-hots used by the next-cycle packet-data read:
-  // {head_present, bank_oh[7:0], local_oh[7:0], physical_onehot[D-1:0],
-  //  target[AW-1:0], valid, index[AW-1:0]}.
-  function [D+2*AW+17:0] peHoh;
+  // Safe-profile hierarchical selector returning only the information used
+  // after selection: physical one-hot, target payload, valid, and index.
+  // Keeping bank/local read coordinates out of this result prevents parallel
+  // metadata cones from loading the age selector.
+  // {head_present, physical_onehot[D-1:0], target[AW-1:0],
+  //  valid, index[AW-1:0]}.
+  function [D+2*AW+1:0] peHoh;
     input [D-1:0]  v;
     input [AW-1:0] base;
     input [D*AW-1:0] tgt_f;
@@ -189,7 +189,6 @@ module ff_pick #(
     reg [3:0]  other_bank_oh;
     reg [AW-1:0] post_tgt, pre_tgt, other_tgt, result_tgt;
     reg [D-1:0]  result_oh;
-    reg [7:0]    result_bank_oh, result_local_oh;
     reg [AW-1:0] result_idx;
     reg          result_v, head_present;
     begin
@@ -236,8 +235,6 @@ module ff_pick #(
       end
 
       result_oh  = {D{1'b0}};
-      result_bank_oh = 8'b0;
-      result_local_oh = 8'b0;
       result_tgt = {AW{1'b0}};
       result_idx = {AW{1'b0}};
       result_v   = 1'b0;
@@ -245,8 +242,6 @@ module ff_pick #(
         result_v   = 1'b1;
         result_idx = {base_bank, post_h[2:0]};
         result_tgt = post_tgt;
-        result_bank_oh[{1'b0, base_bank}] = 1'b1;
-        result_local_oh = post_h[11:4];
         for (b = 0; b < 4; b = b + 1)
           if (base_bank == b[1:0])
             result_oh[b*8 +: 8] = post_h[11:4];
@@ -254,8 +249,6 @@ module ff_pick #(
         result_v   = 1'b1;
         result_idx = {other_bank, local_h[2:0]};
         result_tgt = other_tgt;
-        result_bank_oh = {4'b0, other_bank_oh};
-        result_local_oh = local_h[11:4];
         for (b = 0; b < 4; b = b + 1)
           result_oh[b*8 +: 8] = bank_h_f[b*12+4 +: 8]
                                  & {8{other_bank_oh[b]}};
@@ -263,14 +256,11 @@ module ff_pick #(
         result_v   = 1'b1;
         result_idx = {base_bank, pre_h[2:0]};
         result_tgt = pre_tgt;
-        result_bank_oh[{1'b0, base_bank}] = 1'b1;
-        result_local_oh = pre_h[11:4];
         for (b = 0; b < 4; b = b + 1)
           if (base_bank == b[1:0])
             result_oh[b*8 +: 8] = pre_h[11:4];
       end
-      peHoh = {head_present, result_bank_oh, result_local_oh,
-               result_oh, result_tgt, result_v, result_idx};
+      peHoh = {head_present, result_oh, result_tgt, result_v, result_idx};
     end
   endfunction
 
@@ -312,8 +302,7 @@ module ff_pick #(
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
   reg [AW-1:0]  pk_tgt_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
-  reg [7:0]     pk_bank_oh_q [0:NFE-1];
-  reg [7:0]     pk_local_oh_q [0:NFE-1];
+  reg [D-1:0]   pk_entry_oh_q [0:NFE-1];
   reg [D-1:0]   picked_q;
 
   // E005 stores the commit bitmap beside pk_v_int/pk_idx_q.  All three
@@ -337,8 +326,6 @@ module ff_pick #(
   wire [AW-1:0]  sel_idx [0:NFE-1];
   wire [AW-1:0]  sel_tgt [0:NFE-1];
   wire [D-1:0]   sel_oh  [0:NFE-1];
-  wire [7:0]     sel_bank_oh [0:NFE-1];
-  wire [7:0]     sel_local_oh [0:NFE-1];
   wire [NFE-1:0] sec_fnd;
   wire [AW-1:0]  sec_sel [0:NFE-1];
 
@@ -355,27 +342,21 @@ module ff_pick #(
         // The safe profile consumes only the primary candidate.  Preserve the
         // hierarchical one-hot result beside its binary index so picked_n can
         // use it directly instead of decoding pk_idx_n back to 32 bits.
-        wire [D+2*AW+17:0] page_h = peHoh(cand, rbase, rob_tgt_f);
-        wire [D+2*AW+17:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
+        wire [D+2*AW+1:0] page_h = peHoh(cand, rbase, rob_tgt_f);
+        wire [D+2*AW+1:0] pec_h  = peHoh(cand & crit_q, rbase, rob_tgt_f);
         wire [AW:0] page = page_h[AW:0];
         wire [AW:0] pec  = pec_h[AW:0];
         // E016-N1 local-head equivalence: page.idx differs from rbase exactly
         // when the normal selector's base-bank post-mask PE did not select
         // rbase.  This keeps the decision parallel with the remaining bank
         // selection while reusing an 8-entry local cone already in peHoh.
-        wire use_crit = pec[AW] && !page_h[D+2*AW+17];
+        wire use_crit = pec[AW] && !page_h[D+2*AW+1];
         assign fnd_raw[gf] = use_crit ? pec[AW] : page[AW];
         assign sel_idx[gf] = use_crit ? pec[AW-1:0] : page[AW-1:0];
         assign sel_tgt[gf] = use_crit ? pec_h[2*AW:AW+1]
                                       : page_h[2*AW:AW+1];
         assign sel_oh[gf]  = use_crit ? pec_h[D+2*AW:2*AW+1]
                                       : page_h[D+2*AW:2*AW+1];
-        assign sel_local_oh[gf] = use_crit
-                                  ? pec_h[D+2*AW+8:D+2*AW+1]
-                                  : page_h[D+2*AW+8:D+2*AW+1];
-        assign sel_bank_oh[gf]  = use_crit
-                                  ? pec_h[D+2*AW+16:D+2*AW+9]
-                                  : page_h[D+2*AW+16:D+2*AW+9];
         assign sec_fnd[gf] = 1'b0;
         assign sec_sel[gf] = {AW{1'b0}};
       end else begin : g_dual
@@ -398,8 +379,6 @@ module ff_pick #(
         assign sel_idx[gf] = pri[AW-1:0];
         assign sel_tgt[gf] = {AW{1'b0}};
         assign sel_oh[gf]  = {D{1'b0}};
-        assign sel_bank_oh[gf]  = 8'b0;
-        assign sel_local_oh[gf] = 8'b0;
         assign sec_fnd[gf] = bothf && (sec[AW-1:0] != pri[AW-1:0]);
         assign sec_sel[gf] = sec[AW-1:0];
       end
@@ -501,8 +480,7 @@ module ff_pick #(
   reg [AW-1:0] pk_idx_n [0:NFE-1];
   reg [AW-1:0] pk_tgt_n [0:NFE-1];
   reg [1:0]    pk_lat_n [0:NFE-1];
-  reg [7:0]    pk_bank_oh_n [0:NFE-1];
-  reg [7:0]    pk_local_oh_n [0:NFE-1];
+  reg [D-1:0]  pk_entry_oh_n [0:NFE-1];
   always @* begin
     for (f = 0; f < NFE; f = f + 1) begin
       pk_v_n[f] = fnd[f] | (st1_v && (st1_rr == f[1:0]))
@@ -522,27 +500,23 @@ module ff_pick #(
     end
   end
 
-  // The safe selector already knows both hierarchy coordinates. Register
-  // them beside pk_idx so I1 does not rebuild either 3-to-8 decoder on the
-  // 128-bit packet-data path. Dual-steal can select a registered donor, so it
-  // derives the same metadata from the final stolen index instead.
+  // Register the final physical one-hot itself.  E029 carried bank/local
+  // coordinates instead, making rbase -> selector -> pk_bank_oh_q the DCG
+  // worst path.  The direct handoff ends I0 at the selector's already-needed
+  // physical one-hot and lets I1 use low-fanout per-entry read selects.
   generate
-    if (DUAL_STEAL == 0) begin : g_safe_read_sel
+    if (DUAL_STEAL == 0) begin : g_safe_entry_sel
       integer sf;
       always @* begin
-        for (sf = 0; sf < NFE; sf = sf + 1) begin
-          pk_bank_oh_n[sf]  = sel_bank_oh[sf];
-          pk_local_oh_n[sf] = sel_local_oh[sf];
-        end
+        for (sf = 0; sf < NFE; sf = sf + 1)
+          pk_entry_oh_n[sf] = sel_oh[sf];
       end
-    end else begin : g_dual_read_sel
+    end else begin : g_dual_entry_sel
       integer sf;
       always @* begin
         for (sf = 0; sf < NFE; sf = sf + 1) begin
-          pk_bank_oh_n[sf]  = 8'b0;
-          pk_local_oh_n[sf] = 8'b0;
-          pk_bank_oh_n[sf][{1'b0, pk_idx_n[sf][4:3]}] = 1'b1;
-          pk_local_oh_n[sf][pk_idx_n[sf][2:0]] = 1'b1;
+          pk_entry_oh_n[sf] = {D{1'b0}};
+          pk_entry_oh_n[sf][pk_idx_n[sf]] = 1'b1;
         end
       end
     end
@@ -605,8 +579,7 @@ module ff_pick #(
       // unconditional so the picker cone cannot become an ICG-enable path.
       pk_tgt_q[f] <= pk_tgt_n[f];
       pk_lat_q[f] <= pk_lat_n[f];
-      pk_bank_oh_q[f] <= pk_bank_oh_n[f];
-      pk_local_oh_q[f] <= pk_local_oh_n[f];
+      pk_entry_oh_q[f] <= pk_entry_oh_n[f];
     end
   end
 
@@ -627,8 +600,7 @@ module ff_pick #(
       assign pk_idx_f[gf*AW +: AW] = pk_idx_q[gf];
       assign pk_tgt_f[gf*AW +: AW] = pk_tgt_q[gf];
       assign pk_lat_f[gf*2 +: 2]   = pk_lat_q[gf];
-      assign pk_bank_oh_f[gf*8 +: 8]  = pk_bank_oh_q[gf];
-      assign pk_local_oh_f[gf*8 +: 8] = pk_local_oh_q[gf];
+      assign pk_entry_oh_f[gf*D +: D] = pk_entry_oh_q[gf];
     end
     for (gi = 0; gi < D; gi = gi + 1) begin : g_es
       assign rob_src_f[gi*2 +: 2] = rob_src[gi];
