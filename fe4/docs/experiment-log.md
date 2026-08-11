@@ -30,6 +30,19 @@
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob64-iq32-safe | 0 | 0 | 0 | E042：64 项 Storage ROB、32 项 IQ、寄存化分配边界 |
+| rob64-iq32-400ps-safe | 0 | 0 | 0 | E043：E042 基础上的深流水，目标 0.400 ns、uncertainty 0.045 ns |
+
+## 本地加权逻辑代理
+
+E043 起，本地架构迭代额外使用一组经验门延迟做组合路径加权：AND/OR
+取 25–30 ps（典型 27.5 ps），XOR 35 ps，2:1 MUX 50–60 ps（典型
+55 ps），反相器按 0 ps。该代理先用通用 Yosys/ABC 展开组合网表，再从
+输入/寄存器 Q 遍历到输出/寄存器 D；它不包含真实标准单元的 Tcq、setup、
+布线、扇出和拥塞，因此只能用于架构排序，不能替代内网 STA 签核。
+
+对 0.400 ns 周期和 0.045 ns uncertainty，当前暂按 0.355 ns 作为本地
+组合逻辑预算。只有内网同一工艺库、corner 和约束下的 STA 报告才能确认
+是否真正达到 0.400 ns。
 
 ## 结果
 
@@ -44,6 +57,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E042 | `0b9b8db4cde9cdca31840bc3f84bf52b6ad902c3` | rob64-iq32-safe | 6531 | 9933 | 25025 | — | — | — | — | — | — | — | V28 独立分支上的 Storage ROB / IQ 解耦候选：64 项数据/结果/退休 ROB，32 项描述符 IQ；IQ 分配预约寄存，32×32 顺序矩阵 + 五层 OR picker，一元 Kogge-Stone 四路空槽分配；ROB `old_u` 用 one-hot 影子和每拍 8 项 bounded catch-up。依赖重载 12073 cycles，dual/full 重载 6366/5931，普通重载 8 seeds 与依赖 3 seeds 全部通过。统一 Yosys 代理为 299113 AND / 190970 NOT、全设计深度 56、IQ 31、picker 47；V28 为 144256/94141、全设计 54、picker 44。重载 `cycles×depth` 粗代理相对 V28 -34.5%，但 AND+NOT 为 2.05×，必须用固定内网 STA/Area/Power/统一用例确认最终 T 与 Score。 |
+| E043 | `057ed9a389f412a0f4522e6fcc7c23985ae6b74c` | rob64-iq32-400ps-safe | 16741 | 17561 | 25519 | — | — | — | — | — | — | — | E042 上的 0.400 ns timing-first 候选：safe picker 拆为 blocker/descriptor/choice/commit 四级；ROB 写回先按 FE 注册 one-hot（full bypass 保留同拍写回）；`old_u` 首空洞、7-bit 距离减法和 BKPR 分段；退休改为 R0 扫描/R1 提交；IQ 使用 banked allocation/pressure 及预译码 class-ready。0.045 ns uncertainty 下组合预算为 0.355 ns；本地加权代理 low/nom/high 为 0.300/0.330/0.360 ns，典型余量 0.025 ns，保守模型仍差 0.005 ns，且尚未计 Tcq/setup/布线。关键路径并列在 `ROB resv → IQ known_probe`、`ROB first_gap → adv`、picker reservation feedback。20k safe heavy/mid/sparse、dual-heavy 12727 cycles、full-heavy 10077 cycles 全部通过；AND-only 代理为 352232 AND / 203547 NOT、深度 25。流水延迟使 safe 重载 cycles 比 E042 增加 156.3%，所以 0.400 ns 周期目标不能直接等同于统一用例 T 或 Score 改善，必须以内网 STA 和固定统一用例实测裁决。 |
 
 ## 分支与提交约定
 
@@ -61,5 +75,7 @@
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - `codex/4fe-rob32-decoupled-iq-v42`：从已恢复的 V28/E029 创建；E042
   将 64 项 Storage ROB 与 32 项 IQ 解耦，不改写 `timing/4fe-rob32-v28`。
+- `codex/e043-400ps-pipeline`：从 E042 创建；只承载 0.400 ns 目标的深
+  流水候选，不改写 E042 或 `timing/4fe-rob32-v28`。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
