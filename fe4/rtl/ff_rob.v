@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
-// Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : 64-entry storage/retirement ROB; IQ occupancy drives issue BKPR
+// RTL revision : 4FE-safe-v44
+// Experiment   : E044-R32-IQ32
+// Based on     : E042-R64-IQ32
+// Changes      : 32-entry storage/retirement ROB; IQ remains 32 entries
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -14,9 +14,9 @@
 // guarantees no needed result is ever overwritten.
 // =============================================================================
 module ff_rob #(
-  parameter D   = 64,
-  parameter AW  = 6,
-  parameter SW  = 7,
+  parameter D   = 32,
+  parameter AW  = 5,
+  parameter SW  = 6,
   parameter NFE = 4
 )(
   input  wire                clk,
@@ -65,14 +65,14 @@ module ff_rob #(
 
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
-  //  * occupancy: storage entry reuse (seq n overwrites n-64): 55
+  //  * occupancy: storage entry reuse (seq n overwrites n-32): 23
   //  * retained-result window: keep a dependency target from being reused
-  //    while an older unissued consumer still needs it: 45 (E021 invariant)
+  //    while an older unissued consumer still needs it: 13
   //  * IQ occupancy: ff_iq reserves eight slots for registered-BKPR flight
   // Keep the legacy occ/win names because the regression testbench samples
   // them to classify backpressure causes.
-  localparam [SW-1:0] OCC_TH = 55;
-  localparam [SW-1:0] WIN_TH = 45;
+  localparam [SW-1:0] OCC_TH = 23;
+  localparam [SW-1:0] WIN_TH = 13;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -162,7 +162,7 @@ module ff_rob #(
   // oldest-un-issued pointer: bounded catch-up, clamped at alloc frontier.
   // At most four entries issue per cycle, so an eight-entry catch-up window
   // drains a released head faster than new issued state can accumulate. This
-  // replaces the timing-dominant 64-entry global scan with eight parallel
+  // replaces the timing-dominant 32-entry global scan with eight parallel
   // indexed reads and a small priority encoder.
   // -------------------------------------------------------------------------
   reg [SW-1:0] adv;

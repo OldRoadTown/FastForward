@@ -9,7 +9,7 @@
 //   slot-conflict checks.
 // =============================================================================
 module ff_sched #(
-  parameter AW  = 6,
+  parameter AW  = 5,
   parameter NFE = 4
 )(
   input  wire                clk,

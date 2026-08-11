@@ -1,18 +1,18 @@
 // =============================================================================
 // ff_iq_pick - balanced-tree picker for the decoupled issue queue
 //
-// Experiment : E042
-// Base       : 4FE-safe-v28 / E029-R32
+// Experiment : E044
+// Base       : E042-R64-IQ32
 //
-// The timing-sensitive search is bounded by QD=32 even though storage ROB is
-// 64 entries. The IQ age matrix produces an oldest one-hot mask; a five-level
+// The timing-sensitive search and storage ROB are both 32 entries. The IQ age
+// matrix produces an oldest one-hot mask; a five-level
 // OR tree carries the ROB tag and target without a post-pick descriptor read.
 // =============================================================================
 module ff_iq_pick #(
   parameter QD          = 32,
   parameter QAW         = 5,
-  parameter RD          = 64,
-  parameter RAW         = 6,
+  parameter RD          = 32,
+  parameter RAW         = 5,
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0,
@@ -37,7 +37,7 @@ module ff_iq_pick #(
   output wire [NFE*RAW-1:0]      pk_idx_f,
   output wire [NFE*RAW-1:0]      pk_tgt_f,
   output wire [NFE*2-1:0]        pk_lat_f,
-  output wire [NFE*8-1:0]        pk_bank_oh_f,
+  output wire [NFE*4-1:0]        pk_bank_oh_f,
   output wire [NFE*8-1:0]        pk_local_oh_f,
   output wire [RD*2-1:0]         rob_src_f
 );
@@ -149,7 +149,7 @@ module ff_iq_pick #(
   reg [RAW-1:0] pk_idx_q [0:NFE-1];
   reg [RAW-1:0] pk_tgt_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
-  reg [7:0]     pk_bank_oh_q [0:NFE-1];
+  reg [3:0]     pk_bank_oh_q [0:NFE-1];
   reg [7:0]     pk_local_oh_q [0:NFE-1];
 
   reg [NFE-1:0] own_cfl;
@@ -320,7 +320,7 @@ module ff_iq_pick #(
   reg [RAW-1:0] pk_idx_n [0:NFE-1];
   reg [RAW-1:0] pk_tgt_n [0:NFE-1];
   reg [1:0]     pk_lat_n [0:NFE-1];
-  reg [7:0]     pk_bank_oh_n [0:NFE-1];
+  reg [3:0]     pk_bank_oh_n [0:NFE-1];
   reg [7:0]     pk_local_oh_n [0:NFE-1];
   reg [QD-1:0] picked_iq_n;
   reg [RD-1:0] picked_rob_n;
@@ -341,9 +341,9 @@ module ff_iq_pick #(
         pk_qix_n[f] = st2_qix; pk_idx_n[f] = st2_rob;
         pk_tgt_n[f] = st2_tgt; pk_lat_n[f] = st2_dc;
       end
-      pk_bank_oh_n[f]  = 8'b0;
+      pk_bank_oh_n[f]  = 4'b0;
       pk_local_oh_n[f] = 8'b0;
-      pk_bank_oh_n[f][pk_idx_n[f][5:3]] = 1'b1;
+      pk_bank_oh_n[f][pk_idx_n[f][RAW-1:3]] = 1'b1;
       pk_local_oh_n[f][pk_idx_n[f][2:0]] = 1'b1;
       if (pk_v_n[f]) begin
         picked_iq_n[pk_qix_n[f]] = 1'b1;
@@ -387,7 +387,7 @@ module ff_iq_pick #(
       assign pk_idx_f[gf*RAW +: RAW] = pk_idx_q[gf];
       assign pk_tgt_f[gf*RAW +: RAW] = pk_tgt_q[gf];
       assign pk_lat_f[gf*2 +: 2] = pk_lat_q[gf];
-      assign pk_bank_oh_f[gf*8 +: 8] = pk_bank_oh_q[gf];
+      assign pk_bank_oh_f[gf*4 +: 4] = pk_bank_oh_q[gf];
       assign pk_local_oh_f[gf*8 +: 8] = pk_local_oh_q[gf];
     end
     for (gi = 0; gi < RD; gi = gi + 1) begin : g_src

@@ -1,8 +1,8 @@
 // =============================================================================
-// ff_iq - decoupled 32-entry issue queue for a 64-entry storage ROB
+// ff_iq - decoupled 32-entry issue queue for a 32-entry storage ROB
 //
-// Experiment : E042
-// Base       : 4FE-safe-v28 / E029-R32
+// Experiment : E044
+// Base       : E042-R64-IQ32
 //
 // Only scheduling descriptors live here. Packet/result data and retirement
 // state remain in ff_rob. IQ slots are allocated from the free list, so their
@@ -12,7 +12,7 @@
 module ff_iq #(
   parameter QD  = 32,
   parameter QAW = 5,
-  parameter RAW = 6
+  parameter RAW = 5
 )(
   input  wire                    clk,
   input  wire                    rst_n,
