@@ -30,6 +30,7 @@
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob64-iq32-safe | 0 | 0 | 0 | E042：64 项 Storage ROB、32 项 IQ、寄存化分配边界 |
+| rob32-iq32-safe | 0 | 0 | 0 | E044：保持 E042 的 IQ32，只将 Storage ROB 缩为 32 项 |
 
 ## 结果
 
@@ -44,6 +45,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E042 | `0b9b8db4cde9cdca31840bc3f84bf52b6ad902c3` | rob64-iq32-safe | 6531 | 9933 | 25025 | — | — | — | — | — | — | — | V28 独立分支上的 Storage ROB / IQ 解耦候选：64 项数据/结果/退休 ROB，32 项描述符 IQ；IQ 分配预约寄存，32×32 顺序矩阵 + 五层 OR picker，一元 Kogge-Stone 四路空槽分配；ROB `old_u` 用 one-hot 影子和每拍 8 项 bounded catch-up。依赖重载 12073 cycles，dual/full 重载 6366/5931，普通重载 8 seeds 与依赖 3 seeds 全部通过。统一 Yosys 代理为 299113 AND / 190970 NOT、全设计深度 56、IQ 31、picker 47；V28 为 144256/94141、全设计 54、picker 44。重载 `cycles×depth` 粗代理相对 V28 -34.5%，但 AND+NOT 为 2.05×，必须用固定内网 STA/Area/Power/统一用例确认最终 T 与 Score。 |
+| E044 | `ff5673e364a3d501ef5ad05e77e751d692389813` | rob32-iq32-safe | 11146 | 12353 | 25039 | — | — | — | — | — | — | — | E042 的单变量 Storage ROB32 对照，IQ 保持 32 项，数据读网由 8×8 收敛为 4×8，ROB 安全阈值恢复为 OCC/WIN=23/13。lint、quick、20k safe/dual/full/依赖重载全部通过；dual/full/依赖重载分别为 11066/9861/16625 cycles。相对 E042，safe 重载 cycles +70.7%，中载 +24.4%，稀疏 +0.06%；dual +73.8%，full +66.3%，依赖重载 +37.7%。统一 Yosys 代理 AND/NOT 由 299113/190970 降至 172623/111201（合计 -42.1%），全设计深度 56→53；按经验门延迟的 nominal 最长组合路径仅由 0.9425 ns 降至 0.9150 ns，且仍有 1576 个寄存器/端口 endpoint 超过 0.355 ns 数据预算。重载 `cycles×估算路径` 反而 +65.7%，故判定为面积有效但最终 T 无效的负实验，不替换 E042。 |
 
 ## 分支与提交约定
 
@@ -61,5 +63,8 @@
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - `codex/4fe-rob32-decoupled-iq-v42`：从已恢复的 V28/E029 创建；E042
   将 64 项 Storage ROB 与 32 项 IQ 解耦，不改写 `timing/4fe-rob32-v28`。
+- `codex/e044-e042-rob32-storage`：从 E042 创建的单变量负实验；只将
+  Storage ROB 由 64 缩至 32，保留 IQ32，用于证明面积收益不足以抵消
+  重载 backpressure 与 cycles 损失，不替换 E042。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
