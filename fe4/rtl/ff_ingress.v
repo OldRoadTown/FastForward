@@ -2,10 +2,11 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
-// Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : use 6-bit storage tags and 7-bit sequence numbers
+// RTL revision : 4FE-safe-v43
+// Experiment   : E043-400ps
+// Based on     : E042-R64-IQ32
+// Changes      : register raw input count and export dependency distance so
+//                target reconstruction can be pipelined inside the IQ
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -35,7 +36,8 @@ module ff_ingress #(
   output wire [D-1:0]    alloc_oh_o,
   // critical marking (a new dependent makes its target critical)
   output wire [3:0]      kw_vld_o,      // k valid && dependent
-  output wire [4*AW-1:0] k_tgt_f
+  output wire [4*AW-1:0] k_tgt_f,
+  output wire [11:0]     k_dep_f        // packet-rank dependency distances
 );
 
   // -------------------------------------------------------------------------
@@ -55,13 +57,22 @@ module ff_ingress #(
   // S0 input registers (PKTIN must be registered before use)
   // -------------------------------------------------------------------------
   reg [3:0]   in_vld_q;
+  reg [2:0]   in_count_q;
   reg [127:0] in_data_q [0:3];
   reg [4:0]   in_ctrl_q [0:3];
   integer i;
 
+  wire [1:0] in_count_lo = {1'b0, in_vld[0]} + {1'b0, in_vld[1]};
+  wire [1:0] in_count_hi = {1'b0, in_vld[2]} + {1'b0, in_vld[3]};
+  wire [2:0] in_count = {1'b0, in_count_lo} + {1'b0, in_count_hi};
   always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) in_vld_q <= 4'b0;
-    else        in_vld_q <= in_vld;
+    if (!rst_n) begin
+      in_vld_q   <= 4'b0;
+      in_count_q <= 3'b0;
+    end else begin
+      in_vld_q   <= in_vld;
+      in_count_q <= in_count;
+    end
   end
   always @(posedge clk) begin           // enable-gated datapath, no reset
     for (i = 0; i < 4; i = i + 1) begin
@@ -124,31 +135,26 @@ module ff_ingress #(
     comp_ctrl[1] = in_ctrl_q[1];
     comp_ctrl[2] = in_ctrl_q[2];
     comp_ctrl[3] = in_ctrl_q[3];
-    acnt    = 3'd0;
+    acnt    = in_count_q;
     case (in_vld_q)
-      4'b0000: acnt = 3'd0;
-      4'b0001: acnt = 3'd1;
-      4'b0010: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[1]; end
-      4'b0100: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[2]; end
-      4'b1000: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[3]; end
-      4'b0011: acnt = 3'd2;
-      4'b0101: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[2]; end
-      4'b1001: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b0110: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+      4'b0010: comp_ctrl[0] = in_ctrl_q[1];
+      4'b0100: comp_ctrl[0] = in_ctrl_q[2];
+      4'b1000: comp_ctrl[0] = in_ctrl_q[3];
+      4'b0101: comp_ctrl[1] = in_ctrl_q[2];
+      4'b1001: comp_ctrl[1] = in_ctrl_q[3];
+      4'b0110: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[2]; end
-      4'b1010: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+      4'b1010: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b1100: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[2];
+      4'b1100: begin comp_ctrl[0] = in_ctrl_q[2];
                      comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b0111: acnt = 3'd3;
-      4'b1011: begin acnt = 3'd3; comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1101: begin acnt = 3'd3; comp_ctrl[1] = in_ctrl_q[2];
+      4'b1011: comp_ctrl[2] = in_ctrl_q[3];
+      4'b1101: begin comp_ctrl[1] = in_ctrl_q[2];
                      comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1110: begin acnt = 3'd3; comp_ctrl[0] = in_ctrl_q[1];
+      4'b1110: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[2];
                      comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1111: acnt = 3'd4;
-      default: acnt = 3'd0;
+      default: begin end
     endcase
   end
 
@@ -264,6 +270,7 @@ module ff_ingress #(
       // crit_q only changes priority while that target is still ready.
       assign kw_vld_o[gi]          = (gi[2:0] < acnt) && k_isdep[gi];
       assign k_tgt_f[gi*AW +: AW]  = k_tgt[gi];
+      assign k_dep_f[gi*3 +: 3]    = k_dep[gi];
     end
   endgenerate
   assign acnt_o       = acnt;
