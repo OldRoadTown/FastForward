@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v46
-// Experiment   : E046-R64-IQ32-onehot-retire
+// RTL revision : 4FE-safe-v52
+// Experiment   : E052-R64-IQ32-retire-live-vector
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : registered-result retirement from a one-hot head window
+// Changes      : registered live vector replaces alloc/out sequence compare
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
@@ -18,10 +18,10 @@ module ff_egress #(
 )(
   input  wire                clk,
   input  wire                rst_n,
-  input  wire [SW-1:0]       alloc_seq,
   input  wire [SW-1:0]       out_seq,
   input  wire [D-1:0]        out_oh,
   input  wire [D-1:0]        resv_q,
+  input  wire [D-1:0]        live_q,
   input  wire [D*128-1:0]    rob_data_f,
   output reg  [2:0]          pop_cnt,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
@@ -44,11 +44,10 @@ module ff_egress #(
   wire [D-1:0] om1 = {out_oh[D-2:0], out_oh[D-1]};
   wire [D-1:0] om2 = {out_oh[D-3:0], out_oh[D-1:D-2]};
   wire [D-1:0] om3 = {out_oh[D-4:0], out_oh[D-1:D-3]};
-  wire [SW-1:0] retire_avail = alloc_seq - out_seq;
-  wire can0 = (retire_avail > 0) && |(resv_q & om0);
-  wire can1 = (retire_avail > 1) && |(resv_q & om1);
-  wire can2 = (retire_avail > 2) && |(resv_q & om2);
-  wire can3 = (retire_avail > 3) && |(resv_q & om3);
+  wire can0 = |(resv_q & live_q & om0);
+  wire can1 = |(resv_q & live_q & om1);
+  wire can2 = |(resv_q & live_q & om2);
+  wire can3 = |(resv_q & live_q & om3);
 
   always @* begin
     pop_cnt = 3'd0;

@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v49
-// Experiment   : E049-R64-IQ32-lat0-wake-boundary
+// RTL revision : 4FE-safe-v52
+// Experiment   : E052-R64-IQ32-retire-live-vector
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : latency-0 dependents wake on registered actual-return tags
+// Changes      : explicit live vector removes alloc_seq from retirement path
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -51,6 +51,7 @@ module ff_rob #(
   output wire [D-1:0]        rdy_o,
   output wire [D-1:0]        crit_o,
   output wire [D-1:0]        resv_o,
+  output wire [D-1:0]        live_o,
   output wire [D-1:0]        out_oh_o,
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
@@ -127,6 +128,7 @@ module ff_rob #(
   reg [D-1:0]  wtg_q;                   // waiting for dependency result
   reg [D-1:0]  iss_q;                   // picked/issued
   reg [D-1:0]  resv_q;                  // result present (retained after pop)
+  reg [D-1:0]  live_q;                  // allocated and not yet retired
 
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
@@ -148,6 +150,21 @@ module ff_rob #(
       if (pre_v[f])  res_pred_r[pre_idx[f]]  = 1'b1;
     end
   end
+
+  // Clear exactly the fixed head positions consumed this cycle.  Egress uses
+  // live_q to distinguish the current allocation epoch from a stale retained
+  // result, eliminating alloc_seq-out_seq from its completion check.
+  wire [D-1:0] pop_oh = (pop_cnt == 0) ? {D{1'b0}}
+                            : out_oh_q
+                              | ((pop_cnt > 1)
+                                 ? {out_oh_q[D-2:0], out_oh_q[D-1]}
+                                 : {D{1'b0}})
+                              | ((pop_cnt > 2)
+                                 ? {out_oh_q[D-3:0], out_oh_q[D-1:D-2]}
+                                 : {D{1'b0}})
+                              | ((pop_cnt > 3)
+                                 ? {out_oh_q[D-4:0], out_oh_q[D-1:D-3]}
+                                 : {D{1'b0}});
 
   // Pre-wake from slot2 remains for latency classes 1..3. Latency class 0 has
   // no slot2 residence, so it wakes from the registered slot1/actual-return
@@ -273,6 +290,7 @@ module ff_rob #(
       wtg_q       <= {D{1'b0}};
       iss_q       <= {D{1'b0}};
       resv_q      <= {D{1'b0}};
+      live_q      <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
       out_oh_q    <= {{(D-1){1'b0}}, 1'b1};
@@ -286,6 +304,7 @@ module ff_rob #(
           wtg_q[e]  <= slot_wtg[e[1:0]];
           iss_q[e]  <= 1'b0;
           resv_q[e] <= 1'b0;
+          live_q[e] <= 1'b1;
         end else begin
           if (picked[e]) begin
             rdy_q[e] <= 1'b0;
@@ -295,6 +314,7 @@ module ff_rob #(
           end
           if (wake_now[e])  wtg_q[e]  <= 1'b0;
           if (res_now_r[e]) resv_q[e] <= 1'b1;
+          if (pop_oh[e])    live_q[e] <= 1'b0;
         end
       end
       alloc_seq_q <= alloc_seq_q + {{(SW-3){1'b0}}, acnt};
@@ -341,6 +361,7 @@ module ff_rob #(
   assign rdy_o       = rdy_q;
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
+  assign live_o      = live_q;
   assign out_oh_o    = out_oh_q;
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
