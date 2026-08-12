@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
+// RTL revision : 4FE-safe-v45
+// Experiment   : E045-R64-IQ32-banked-picker
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : decouple a 64-entry storage ROB from a 32-entry issue queue
+// Changes      : pipeline a 4x8 banked IQ candidate search ahead of arbitration
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -199,9 +199,9 @@ module ff #(
     .iq_count(iq_count), .iq_count_n(iq_count_n), .iq_over_n(iq_over_n)
   );
 
-  ff_iq_pick #(.QD(QD), .QAW(QAW), .RD(D), .RAW(AW), .NFE(NFE),
-               .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
-               .DUAL_STEAL(DUAL_STEAL)) u_pick (
+  ff_iq_pick_banked #(.QD(QD), .QAW(QAW), .RD(D), .RAW(AW), .NFE(NFE),
+                      .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
+                      .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .iq_v(iq_v), .iq_rdy(iq_rdy), .iq_crit(iq_crit), .iq_wake(iq_wake),
     .iq_rob_f(iq_rob_f), .iq_lat_f(iq_lat_f), .iq_tgt_f(iq_tgt_f),

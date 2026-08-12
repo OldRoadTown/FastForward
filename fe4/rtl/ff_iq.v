@@ -69,8 +69,10 @@ module ff_iq #(
   end
 
   // One allocation batch is reserved while its metadata crosses the
-  // ingress->IQ register boundary. A registered pick can be reused by the new
-  // request, but slots reserved by the pending batch remain unavailable.
+  // ingress->IQ register boundary. E045 returns a picked slot to the free list
+  // on the following cycle, so a pipelined bank candidate can be invalidated
+  // solely by valid_q without a tag-compare feedback path. Slots reserved by
+  // the pending batch remain unavailable.
   reg [QD-1:0] alloc_sel_q [0:3];
   reg [2:0] pend_cnt_q;
   wire [3:0] pend_en = {pend_cnt_q > 3, pend_cnt_q > 2,
@@ -79,7 +81,7 @@ module ff_iq #(
                          | (alloc_sel_q[1] & {QD{pend_en[1]}})
                          | (alloc_sel_q[2] & {QD{pend_en[2]}})
                          | (alloc_sel_q[3] & {QD{pend_en[3]}});
-  wire [QD-1:0] free0 = (~valid_q | picked_iq) & ~pend_hit;
+  wire [QD-1:0] free0 = ~valid_q & ~pend_hit;
 
   // Unary saturated-count merge. Bit k means "this prefix contains at least
   // k+1 free slots". The operator is associative, so five Kogge-Stone style
@@ -300,7 +302,8 @@ module ff_iq #(
           if (valid_q[q] && crit_hit[q]) crit_q[q] <= 1'b1;
         end
 
-        // Allocation has final precedence, including same-edge pick reuse.
+        // Allocation has final precedence. E045 deliberately does not assign
+        // a just-picked slot until valid_q has cleared on the following edge.
         if (alloc_hit[q]) begin
           valid_q[q] <= 1'b1;
           ready_q[q] <= slot_new_rdy[q];
