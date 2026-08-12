@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v46
-// Experiment   : E046-R64-IQ32-onehot-retire
+// RTL revision : 4FE-safe-v47
+// Experiment   : E047-R64-IQ32-pipelined-old-u
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : one-hot retirement head; remove same-cycle result-to-pop path
+// Changes      : E046 paths plus a two-phase 16-entry old_u catch-up scan
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;

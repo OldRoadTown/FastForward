@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v46
-// Experiment   : E046-R64-IQ32-onehot-retire
+// RTL revision : 4FE-safe-v47
+// Experiment   : E047-R64-IQ32-pipelined-old-u
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : one-hot retirement head; remove redundant popped-state bitmap
+// Changes      : pipeline a 16-entry oldest-unissued catch-up scan over 2 cycles
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -73,13 +73,13 @@ module ff_rob #(
   localparam [SW-1:0] OCC_TH = 55;
   localparam [SW-1:0] WIN_TH = 45;
 
-  function [3:0] pe8;
-    input [7:0] v;
+  function [4:0] pe16;
+    input [15:0] v;
     integer i;
     begin
-      pe8 = 4'b0;
-      for (i = 7; i >= 0; i = i - 1)
-        if (v[i]) pe8 = {1'b1, i[2:0]};
+      pe16 = 5'b0;
+      for (i = 15; i >= 0; i = i - 1)
+        if (v[i]) pe16 = {1'b1, i[3:0]};
     end
   endfunction
 
@@ -158,24 +158,27 @@ module ff_rob #(
   end
 
   // -------------------------------------------------------------------------
-  // oldest-un-issued pointer: bounded catch-up, clamped at alloc frontier.
-  // At most four entries issue per cycle, so an eight-entry catch-up window
-  // drains a released head faster than new issued state can accumulate. This
-  // replaces the timing-dominant 64-entry global scan with eight parallel
-  // indexed reads and a small priority encoder.
+  // Oldest-un-issued pointer: two-phase bounded catch-up, clamped at the
+  // allocation frontier. Phase A registers a 16-entry issued window; phase B
+  // encodes and applies its first gap. One update every two cycles sustains an
+  // average catch-up capacity of eight entries/cycle, twice the maximum issue
+  // rate, while cutting the OR64 reads away from the PE/add/rotate stage.
   // -------------------------------------------------------------------------
-  reg [SW-1:0] adv;
-  reg [SW-1:0] adv_raw, dist_f;
+  reg [4:0] adv;
+  reg [4:0] adv_raw;
+  reg       scan_pending_q;
+  reg [15:0] issued_scan_q;
+  reg [4:0] dist_scan_q;
   // Consume only committed issue state here. Including the incoming picked
   // bitmap saves at most one old_u catch-up cycle, but couples the registered
   // picker-coordinate decode back through the eight-entry window and priority
   // encoder. The bounded window still advances by up to eight per cycle, twice
   // the maximum issue rate, so this one-cycle lag cannot accumulate.
   wire [D-1:0] iss_eff = iss_q;
-  wire [7:0] issued_win;
+  wire [15:0] issued_win;
   genvar gw;
   generate
-    for (gw = 0; gw < 8; gw = gw + 1) begin : g_issue_window
+    for (gw = 0; gw < 16; gw = gw + 1) begin : g_issue_window
       wire [D-1:0] win_mask;
       if (gw == 0)
         assign win_mask = old_u_oh_q;
@@ -185,27 +188,37 @@ module ff_rob #(
       assign issued_win[gw] = |(iss_eff & win_mask);
     end
   endgenerate
-  wire [3:0] first_gap = pe8(~issued_win);
+  wire [4:0] first_gap = pe16(~issued_scan_q);
+  wire [SW-1:0] dist_now = alloc_seq_q - old_u_q;
+  wire [4:0] dist_capture = (dist_now > 7'd16)
+                              ? 5'd16 : dist_now[4:0];
   always @* begin
-    adv_raw = first_gap[3]
-              ? {{(SW-3){1'b0}}, first_gap[2:0]}
-              : {{(SW-4){1'b0}}, 4'd8};
-    dist_f     = alloc_seq_q - old_u_q;
-    adv = (adv_raw > dist_f) ? dist_f : adv_raw;
+    adv_raw = scan_pending_q
+              ? (first_gap[4] ? {1'b0, first_gap[3:0]} : 5'd16)
+              : 5'd0;
+    adv = (adv_raw > dist_scan_q) ? dist_scan_q : adv_raw;
   end
-  wire [SW-1:0] old_u_n = old_u_q + adv;
+  wire [SW-1:0] old_u_n = old_u_q + {{(SW-5){1'b0}}, adv};
   reg [D-1:0] old_u_oh_n;
   always @* begin
-    case (adv[3:0])
-      4'd0: old_u_oh_n = old_u_oh_q;
-      4'd1: old_u_oh_n = {old_u_oh_q[D-2:0], old_u_oh_q[D-1]};
-      4'd2: old_u_oh_n = {old_u_oh_q[D-3:0], old_u_oh_q[D-1:D-2]};
-      4'd3: old_u_oh_n = {old_u_oh_q[D-4:0], old_u_oh_q[D-1:D-3]};
-      4'd4: old_u_oh_n = {old_u_oh_q[D-5:0], old_u_oh_q[D-1:D-4]};
-      4'd5: old_u_oh_n = {old_u_oh_q[D-6:0], old_u_oh_q[D-1:D-5]};
-      4'd6: old_u_oh_n = {old_u_oh_q[D-7:0], old_u_oh_q[D-1:D-6]};
-      4'd7: old_u_oh_n = {old_u_oh_q[D-8:0], old_u_oh_q[D-1:D-7]};
-      4'd8: old_u_oh_n = {old_u_oh_q[D-9:0], old_u_oh_q[D-1:D-8]};
+    case (adv)
+      5'd0:  old_u_oh_n = old_u_oh_q;
+      5'd1:  old_u_oh_n = {old_u_oh_q[D-2:0], old_u_oh_q[D-1]};
+      5'd2:  old_u_oh_n = {old_u_oh_q[D-3:0], old_u_oh_q[D-1:D-2]};
+      5'd3:  old_u_oh_n = {old_u_oh_q[D-4:0], old_u_oh_q[D-1:D-3]};
+      5'd4:  old_u_oh_n = {old_u_oh_q[D-5:0], old_u_oh_q[D-1:D-4]};
+      5'd5:  old_u_oh_n = {old_u_oh_q[D-6:0], old_u_oh_q[D-1:D-5]};
+      5'd6:  old_u_oh_n = {old_u_oh_q[D-7:0], old_u_oh_q[D-1:D-6]};
+      5'd7:  old_u_oh_n = {old_u_oh_q[D-8:0], old_u_oh_q[D-1:D-7]};
+      5'd8:  old_u_oh_n = {old_u_oh_q[D-9:0], old_u_oh_q[D-1:D-8]};
+      5'd9:  old_u_oh_n = {old_u_oh_q[D-10:0], old_u_oh_q[D-1:D-9]};
+      5'd10: old_u_oh_n = {old_u_oh_q[D-11:0], old_u_oh_q[D-1:D-10]};
+      5'd11: old_u_oh_n = {old_u_oh_q[D-12:0], old_u_oh_q[D-1:D-11]};
+      5'd12: old_u_oh_n = {old_u_oh_q[D-13:0], old_u_oh_q[D-1:D-12]};
+      5'd13: old_u_oh_n = {old_u_oh_q[D-14:0], old_u_oh_q[D-1:D-13]};
+      5'd14: old_u_oh_n = {old_u_oh_q[D-15:0], old_u_oh_q[D-1:D-14]};
+      5'd15: old_u_oh_n = {old_u_oh_q[D-16:0], old_u_oh_q[D-1:D-15]};
+      5'd16: old_u_oh_n = {old_u_oh_q[D-17:0], old_u_oh_q[D-1:D-16]};
       default: old_u_oh_n = old_u_oh_q;
     endcase
   end
@@ -268,6 +281,9 @@ module ff_rob #(
       out_oh_q    <= {{(D-1){1'b0}}, 1'b1};
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
+      scan_pending_q <= 1'b0;
+      issued_scan_q  <= 16'b0;
+      dist_scan_q    <= 5'b0;
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
@@ -291,6 +307,11 @@ module ff_rob #(
       out_oh_q    <= out_oh_n;
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
+      scan_pending_q <= ~scan_pending_q;
+      if (!scan_pending_q) begin
+        issued_scan_q <= issued_win;
+        dist_scan_q   <= dist_capture;
+      end
     end
   end
 
