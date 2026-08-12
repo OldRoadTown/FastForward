@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v61
-// Experiment   : E061-R64-IQ32-predecoded-bkpr-thresholds
+// RTL revision : 4FE-safe-v62
+// Experiment   : E062-R64-IQ32-masked-reservations-and-direct-scan-head
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : replace acnt add/compare with fixed BKPR thresholds
+// Changes      : direct one-hot scan rotation; consume registered acnt
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -251,21 +251,26 @@ module ff_rob #(
     if (run_oh[8]) adv_n = {{(SW-4){1'b0}}, 4'd8};
   end
 
-  reg [D-1:0] scan_oh_n;
-  always @* begin
-    case (adv_n[3:0])
-      4'd0: scan_oh_n = old_u_oh_n;
-      4'd1: scan_oh_n = {old_u_oh_n[D-2:0], old_u_oh_n[D-1]};
-      4'd2: scan_oh_n = {old_u_oh_n[D-3:0], old_u_oh_n[D-1:D-2]};
-      4'd3: scan_oh_n = {old_u_oh_n[D-4:0], old_u_oh_n[D-1:D-3]};
-      4'd4: scan_oh_n = {old_u_oh_n[D-5:0], old_u_oh_n[D-1:D-4]};
-      4'd5: scan_oh_n = {old_u_oh_n[D-6:0], old_u_oh_n[D-1:D-5]};
-      4'd6: scan_oh_n = {old_u_oh_n[D-7:0], old_u_oh_n[D-1:D-6]};
-      4'd7: scan_oh_n = {old_u_oh_n[D-8:0], old_u_oh_n[D-1:D-7]};
-      4'd8: scan_oh_n = {old_u_oh_n[D-9:0], old_u_oh_n[D-1:D-8]};
-      default: scan_oh_n = old_u_oh_n;
-    endcase
-  end
+  // run_oh already carries the exact 0..8 rotation in one-hot form. Select
+  // the fixed rotations directly instead of encoding adv_n and decoding it
+  // again through a 64-bit case mux on the scan-head register path.
+  wire [D-1:0] scan_h1 = {old_u_oh_n[D-2:0], old_u_oh_n[D-1]};
+  wire [D-1:0] scan_h2 = {old_u_oh_n[D-3:0], old_u_oh_n[D-1:D-2]};
+  wire [D-1:0] scan_h3 = {old_u_oh_n[D-4:0], old_u_oh_n[D-1:D-3]};
+  wire [D-1:0] scan_h4 = {old_u_oh_n[D-5:0], old_u_oh_n[D-1:D-4]};
+  wire [D-1:0] scan_h5 = {old_u_oh_n[D-6:0], old_u_oh_n[D-1:D-5]};
+  wire [D-1:0] scan_h6 = {old_u_oh_n[D-7:0], old_u_oh_n[D-1:D-6]};
+  wire [D-1:0] scan_h7 = {old_u_oh_n[D-8:0], old_u_oh_n[D-1:D-7]};
+  wire [D-1:0] scan_h8 = {old_u_oh_n[D-9:0], old_u_oh_n[D-1:D-8]};
+  wire [D-1:0] scan_oh_n = ({D{run_oh[0]}} & old_u_oh_n)
+                          | ({D{run_oh[1]}} & scan_h1)
+                          | ({D{run_oh[2]}} & scan_h2)
+                          | ({D{run_oh[3]}} & scan_h3)
+                          | ({D{run_oh[4]}} & scan_h4)
+                          | ({D{run_oh[5]}} & scan_h5)
+                          | ({D{run_oh[6]}} & scan_h6)
+                          | ({D{run_oh[7]}} & scan_h7)
+                          | ({D{run_oh[8]}} & scan_h8);
 
   // -------------------------------------------------------------------------
   // BKPR (registered output)

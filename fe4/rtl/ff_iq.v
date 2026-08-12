@@ -1,7 +1,7 @@
 // =============================================================================
 // ff_iq - decoupled 32-entry issue queue for a 64-entry storage ROB
 //
-// Experiment : E050
+// Experiment : E062
 // Base       : 4FE-safe-v28 / E029-R32
 //
 // Only scheduling descriptors live here. Packet/result data and retirement
@@ -10,6 +10,8 @@
 // matrix records the relative age once, keeping tag arithmetic out of pick.
 // Wake-up compares the four registered scheduler/result tags directly against
 // each six-bit target instead of decoding them into a 64-bit bitmap first.
+// Unused allocation ranks are masked when the reservation is registered, so
+// the free-list and age-matrix paths no longer depend on pend_cnt_q decoding.
 // =============================================================================
 module ff_iq #(
   parameter QD  = 32,
@@ -92,12 +94,8 @@ module ff_iq #(
   // request, but slots reserved by the pending batch remain unavailable.
   reg [QD-1:0] alloc_sel_q [0:3];
   reg [2:0] pend_cnt_q;
-  wire [3:0] pend_en = {pend_cnt_q > 3, pend_cnt_q > 2,
-                        pend_cnt_q > 1, pend_cnt_q > 0};
-  wire [QD-1:0] pend_hit = (alloc_sel_q[0] & {QD{pend_en[0]}})
-                         | (alloc_sel_q[1] & {QD{pend_en[1]}})
-                         | (alloc_sel_q[2] & {QD{pend_en[2]}})
-                         | (alloc_sel_q[3] & {QD{pend_en[3]}});
+  wire [QD-1:0] pend_hit = alloc_sel_q[0] | alloc_sel_q[1]
+                         | alloc_sel_q[2] | alloc_sel_q[3];
   wire [QD-1:0] free0 = (~valid_q | picked_iq) & ~pend_hit;
 
   // Unary saturated-count merge. Bit k means "this prefix contains at least
@@ -216,10 +214,10 @@ module ff_iq #(
   genvar ga;
   generate
     for (ga = 0; ga < QD; ga = ga + 1) begin : g_alloc_decode
-      assign alloc_lane[ga] = {pend_en[3] & alloc_sel_q[3][ga],
-                               pend_en[2] & alloc_sel_q[2][ga],
-                               pend_en[1] & alloc_sel_q[1][ga],
-                               pend_en[0] & alloc_sel_q[0][ga]};
+      assign alloc_lane[ga] = {alloc_sel_q[3][ga],
+                               alloc_sel_q[2][ga],
+                               alloc_sel_q[1][ga],
+                               alloc_sel_q[0][ga]};
       assign alloc_hit[ga] = |alloc_lane[ga];
       assign slot_new_rob[ga] = (pend_rob_q[0] & {RAW{alloc_lane[ga][0]}})
                               | (pend_rob_q[1] & {RAW{alloc_lane[ga][1]}})
@@ -262,12 +260,10 @@ module ff_iq #(
   // is one exactly when live IQ entry i was allocated before live entry j.
   wire [QD-1:0] survivor = valid_q & ~picked_iq;
   wire [QD-1:0] newer_alloc [0:3];
-  assign newer_alloc[0] = (alloc_sel_q[1] & {QD{pend_en[1]}})
-                        | (alloc_sel_q[2] & {QD{pend_en[2]}})
-                        | (alloc_sel_q[3] & {QD{pend_en[3]}});
-  assign newer_alloc[1] = (alloc_sel_q[2] & {QD{pend_en[2]}})
-                        | (alloc_sel_q[3] & {QD{pend_en[3]}});
-  assign newer_alloc[2] = alloc_sel_q[3] & {QD{pend_en[3]}};
+  assign newer_alloc[0] = alloc_sel_q[1] | alloc_sel_q[2]
+                        | alloc_sel_q[3];
+  assign newer_alloc[1] = alloc_sel_q[2] | alloc_sel_q[3];
+  assign newer_alloc[2] = alloc_sel_q[3];
   assign newer_alloc[3] = {QD{1'b0}};
   wire [QD-1:0] older_n [0:QD-1];
   generate
@@ -318,7 +314,10 @@ module ff_iq #(
       iq_count <= iq_count_n;
       pend_cnt_q <= acnt;
       for (q = 0; q < 4; q = q + 1) begin
-        alloc_sel_q[q] <= alloc_sel[q];
+        // Keep only ranks that belong to this batch. This moves the variable
+        // count decode before the register boundary instead of placing it on
+        // every reservation, metadata, and age-matrix consumer.
+        alloc_sel_q[q] <= (q[2:0] < acnt) ? alloc_sel[q] : {QD{1'b0}};
         pend_rob_q[q]  <= alloc_rob[q];
         pend_lat_q[q]  <= alloc_lat[q];
         pend_tgt_q[q]  <= alloc_tgt[q];

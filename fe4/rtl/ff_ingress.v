@@ -2,10 +2,10 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
+// RTL revision : 4FE-safe-v62
+// Experiment   : E062-R64-IQ32-registered-allocation-count
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : use 6-bit storage tags and 7-bit sequence numbers
+// Changes      : register allocation count beside the input valid vector
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -55,13 +55,30 @@ module ff_ingress #(
   // S0 input registers (PKTIN must be registered before use)
   // -------------------------------------------------------------------------
   reg [3:0]   in_vld_q;
+  reg [2:0]   acnt_q;
   reg [127:0] in_data_q [0:3];
   reg [4:0]   in_ctrl_q [0:3];
   integer i;
 
   always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) in_vld_q <= 4'b0;
-    else        in_vld_q <= in_vld;
+    if (!rst_n) begin
+      in_vld_q <= 4'b0;
+      acnt_q   <= 3'd0;
+    end else begin
+      in_vld_q <= in_vld;
+      // acnt_q describes the same raw batch captured into in_vld_q. Keeping
+      // it at this boundary removes the valid-vector popcount from all ROB
+      // distance, BKPR, and IQ reservation consumers without adding a stage.
+      case (in_vld)
+        4'b0000: acnt_q <= 3'd0;
+        4'b0001, 4'b0010, 4'b0100, 4'b1000: acnt_q <= 3'd1;
+        4'b0011, 4'b0101, 4'b1001, 4'b0110,
+        4'b1010, 4'b1100: acnt_q <= 3'd2;
+        4'b0111, 4'b1011, 4'b1101, 4'b1110: acnt_q <= 3'd3;
+        4'b1111: acnt_q <= 3'd4;
+        default: acnt_q <= 3'd0;
+      endcase
+    end
   end
   always @(posedge clk) begin           // enable-gated datapath, no reset
     for (i = 0; i < 4; i = i + 1) begin
@@ -77,7 +94,7 @@ module ff_ingress #(
   // -------------------------------------------------------------------------
   reg [127:0] comp_data [0:3];
   reg [4:0]   comp_ctrl [0:3];
-  reg [2:0]   acnt;
+  wire [2:0]  acnt = acnt_q;
 
   // Keep the wide packet-data mux independent of the narrow control mux.
   // This prevents control-only dependency logic from inheriting a 133-bit
@@ -124,31 +141,25 @@ module ff_ingress #(
     comp_ctrl[1] = in_ctrl_q[1];
     comp_ctrl[2] = in_ctrl_q[2];
     comp_ctrl[3] = in_ctrl_q[3];
-    acnt    = 3'd0;
     case (in_vld_q)
-      4'b0000: acnt = 3'd0;
-      4'b0001: acnt = 3'd1;
-      4'b0010: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[1]; end
-      4'b0100: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[2]; end
-      4'b1000: begin acnt = 3'd1; comp_ctrl[0] = in_ctrl_q[3]; end
-      4'b0011: acnt = 3'd2;
-      4'b0101: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[2]; end
-      4'b1001: begin acnt = 3'd2; comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b0110: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+      4'b0010: comp_ctrl[0] = in_ctrl_q[1];
+      4'b0100: comp_ctrl[0] = in_ctrl_q[2];
+      4'b1000: comp_ctrl[0] = in_ctrl_q[3];
+      4'b0101: comp_ctrl[1] = in_ctrl_q[2];
+      4'b1001: comp_ctrl[1] = in_ctrl_q[3];
+      4'b0110: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[2]; end
-      4'b1010: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[1];
+      4'b1010: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b1100: begin acnt = 3'd2; comp_ctrl[0] = in_ctrl_q[2];
+      4'b1100: begin comp_ctrl[0] = in_ctrl_q[2];
                      comp_ctrl[1] = in_ctrl_q[3]; end
-      4'b0111: acnt = 3'd3;
-      4'b1011: begin acnt = 3'd3; comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1101: begin acnt = 3'd3; comp_ctrl[1] = in_ctrl_q[2];
+      4'b1011: comp_ctrl[2] = in_ctrl_q[3];
+      4'b1101: begin comp_ctrl[1] = in_ctrl_q[2];
                      comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1110: begin acnt = 3'd3; comp_ctrl[0] = in_ctrl_q[1];
+      4'b1110: begin comp_ctrl[0] = in_ctrl_q[1];
                      comp_ctrl[1] = in_ctrl_q[2];
                      comp_ctrl[2] = in_ctrl_q[3]; end
-      4'b1111: acnt = 3'd4;
-      default: acnt = 3'd0;
+      default: begin end
     endcase
   end
 
