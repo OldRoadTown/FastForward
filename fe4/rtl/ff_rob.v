@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v58
-// Experiment   : E058-R64-IQ32-registered-bkpr-distance
+// RTL revision : 4FE-safe-v59
+// Experiment   : E059-R64-IQ32-onehot-retirement-boundary
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : BKPR consumes registered occupancy/window distances
+// Changes      : one-hot retirement feedback; registered occupancy credit
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -43,6 +43,7 @@ module ff_rob #(
   input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
   input  wire                iq_over,
   input  wire [2:0]          pop_cnt,
+  input  wire [3:0]          pop_therm,
   // state exports
   output wire [D-1:0]        res_now_o,
   output wire [D-1:0]        res_pred_o,
@@ -58,7 +59,6 @@ module ff_rob #(
   output wire [D*AW-1:0]     rob_tgt_f,
   output wire [D-1:0]        rob_isdep_o,
   output wire [SW-1:0]       alloc_seq_o,
-  output wire [SW-1:0]       out_seq_o,
   output wire [SW-1:0]       old_u_o,
   output reg                 bkpr_r         // registered BKPR
 );
@@ -131,12 +131,12 @@ module ff_rob #(
   reg [D-1:0]  live_q;                  // allocated and not yet retired
 
   reg [SW-1:0] alloc_seq_q;
-  reg [SW-1:0] out_seq_q;
   reg [D-1:0]  out_oh_q;                // physical one-hot retirement head
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
   reg [D-1:0]  old_u_oh_q;              // physical one-hot form of old_u_q
   reg [SW-1:0] adv_q;                   // next bounded catch-up, precomputed
-  reg [SW-1:0] occ_q;                   // alloc_seq_q - out_seq_q
+  reg [2:0]    pop_cnt_q;               // prior-cycle retirement credit
+  reg [SW-1:0] occ_q;                   // occupancy plus pop_cnt_q credit
   reg [SW-1:0] win_q;                   // alloc_seq_q - old_u_q
 
   // -------------------------------------------------------------------------
@@ -156,17 +156,14 @@ module ff_rob #(
   // Clear exactly the fixed head positions consumed this cycle.  Egress uses
   // live_q to distinguish the current allocation epoch from a stale retained
   // result, eliminating alloc_seq-out_seq from its completion check.
-  wire [D-1:0] pop_oh = (pop_cnt == 0) ? {D{1'b0}}
-                            : out_oh_q
-                              | ((pop_cnt > 1)
-                                 ? {out_oh_q[D-2:0], out_oh_q[D-1]}
-                                 : {D{1'b0}})
-                              | ((pop_cnt > 2)
-                                 ? {out_oh_q[D-3:0], out_oh_q[D-1:D-2]}
-                                 : {D{1'b0}})
-                              | ((pop_cnt > 3)
-                                 ? {out_oh_q[D-4:0], out_oh_q[D-1:D-3]}
-                                 : {D{1'b0}});
+  wire [D-1:0] out_h1 = {out_oh_q[D-2:0], out_oh_q[D-1]};
+  wire [D-1:0] out_h2 = {out_oh_q[D-3:0], out_oh_q[D-1:D-2]};
+  wire [D-1:0] out_h3 = {out_oh_q[D-4:0], out_oh_q[D-1:D-3]};
+  wire [D-1:0] out_h4 = {out_oh_q[D-5:0], out_oh_q[D-1:D-4]};
+  wire [D-1:0] pop_oh = ({D{pop_therm[0]}} & out_oh_q)
+                        | ({D{pop_therm[1]}} & out_h1)
+                        | ({D{pop_therm[2]}} & out_h2)
+                        | ({D{pop_therm[3]}} & out_h3);
 
   // Pre-wake from slot2 remains for latency classes 1..3. Latency class 0 has
   // no slot2 residence, so it wakes from the registered slot1/actual-return
@@ -239,12 +236,13 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   // BKPR (registered output)
   // -------------------------------------------------------------------------
-  // Keep the current distances as state.  The BKPR decision still includes
-  // this cycle's accepted input count, exactly matching the former
-  // (alloc_seq_q + acnt) - head calculation, but removes the second adder
-  // level from the registered output path.  Preserve occ/win names because
-  // the regression testbench samples them for cause statistics.
-  wire [SW-1:0] occ = occ_q + {{(SW-3){1'b0}}, acnt};
+  // Delay retirement credit by one register before it reaches the occupancy
+  // accumulator.  occ_q therefore equals physical occupancy + pop_cnt_q;
+  // subtracting that registered credit here reconstructs the exact E058
+  // occupancy decision while cutting resv -> pop encoder -> occ_q at a flop.
+  // Preserve occ/win names because the testbench samples their causes.
+  wire [SW-1:0] occ = occ_q + {{(SW-3){1'b0}}, acnt}
+                            - {{(SW-3){1'b0}}, pop_cnt_q};
   wire [SW-1:0] win = win_q + {{(SW-3){1'b0}}, acnt};
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
@@ -253,8 +251,8 @@ module ff_rob #(
 
   // E005 updates the critical vector every cycle through its D input. This
   // preserves the original precedence without putting k_tgt on per-bit clock
-  // gate enables. Retirement no longer needs a per-entry popped bitmap:
-  // out_seq_q/out_oh_q advance on every pop, so an entry cannot pop twice.
+  // gate enables. Retirement no longer needs retained binary sequence state:
+  // out_oh_q advances on every pop, so an entry cannot pop twice.
   reg [D-1:0] crit_set_oh;
   integer ck;
   always @* begin
@@ -269,19 +267,18 @@ module ff_rob #(
     else        crit_q <= crit_n;
   end
 
-  // Four fixed rotations replace binary-addressed 64:1 retirement-state
-  // reads in ff_egress and keep out_seq_q's physical position explicit.
-  reg [D-1:0] out_oh_n;
-  always @* begin
-    case (pop_cnt)
-      3'd0: out_oh_n = out_oh_q;
-      3'd1: out_oh_n = {out_oh_q[D-2:0], out_oh_q[D-1]};
-      3'd2: out_oh_n = {out_oh_q[D-3:0], out_oh_q[D-1:D-2]};
-      3'd3: out_oh_n = {out_oh_q[D-4:0], out_oh_q[D-1:D-3]};
-      3'd4: out_oh_n = {out_oh_q[D-5:0], out_oh_q[D-1:D-4]};
-      default: out_oh_n = out_oh_q;
-    endcase
-  end
+  // Direct thermometer-to-rotation select avoids encode -> binary mux ->
+  // decode on the head update path.
+  wire [4:0] pop_count_oh = {pop_therm[3],
+                             pop_therm[2] & ~pop_therm[3],
+                             pop_therm[1] & ~pop_therm[2],
+                             pop_therm[0] & ~pop_therm[1],
+                             ~pop_therm[0]};
+  wire [D-1:0] out_oh_n = ({D{pop_count_oh[0]}} & out_oh_q)
+                          | ({D{pop_count_oh[1]}} & out_h1)
+                          | ({D{pop_count_oh[2]}} & out_h2)
+                          | ({D{pop_count_oh[3]}} & out_h3)
+                          | ({D{pop_count_oh[4]}} & out_h4);
 
   // -------------------------------------------------------------------------
   // state update
@@ -294,11 +291,11 @@ module ff_rob #(
       resv_q      <= {D{1'b0}};
       live_q      <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
-      out_seq_q   <= {SW{1'b0}};
       out_oh_q    <= {{(D-1){1'b0}}, 1'b1};
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
       adv_q       <= {SW{1'b0}};
+      pop_cnt_q   <= 3'd0;
       occ_q       <= {SW{1'b0}};
       win_q       <= {SW{1'b0}};
     end else begin
@@ -322,13 +319,12 @@ module ff_rob #(
         end
       end
       alloc_seq_q <= alloc_seq_q + {{(SW-3){1'b0}}, acnt};
-      out_seq_q   <= out_seq_q + {{(SW-3){1'b0}}, pop_cnt};
       out_oh_q    <= out_oh_n;
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
       adv_q       <= adv_n;
-      occ_q       <= occ_q + {{(SW-3){1'b0}}, acnt}
-                              - {{(SW-3){1'b0}}, pop_cnt};
+      pop_cnt_q   <= pop_cnt;
+      occ_q       <= occ;
       win_q       <= win_q + {{(SW-3){1'b0}}, acnt} - adv_q;
     end
   end
@@ -371,7 +367,6 @@ module ff_rob #(
   assign live_o      = live_q;
   assign out_oh_o    = out_oh_q;
   assign alloc_seq_o = alloc_seq_q;
-  assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;
 
 endmodule

@@ -1,12 +1,12 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v52
-// Experiment   : E052-R64-IQ32-retire-live-vector
+// RTL revision : 4FE-safe-v59
+// Experiment   : E059-R64-IQ32-onehot-retirement-boundary
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : registered live vector replaces alloc/out sequence compare
+// Changes      : one-hot head drives lane mapping and retirement feedback
 //
-// Pops up to 4 contiguous completed entries starting at out_seq, output lane
+// Pops up to 4 contiguous completed entries starting at the one-hot head; lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
 // is detected from registered result state. PKTOUT is registered.
 // =============================================================================
@@ -18,12 +18,12 @@ module ff_egress #(
 )(
   input  wire                clk,
   input  wire                rst_n,
-  input  wire [SW-1:0]       out_seq,
   input  wire [D-1:0]        out_oh,
   input  wire [D-1:0]        resv_q,
   input  wire [D-1:0]        live_q,
   input  wire [D*128-1:0]    rob_data_f,
-  output reg  [2:0]          pop_cnt,
+  output wire [2:0]          pop_cnt,
+  output wire [3:0]          pop_therm,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
   output reg  [511:0]        lane_d_f       // registered PKTOUT data, 4 x 128
 );
@@ -49,42 +49,55 @@ module ff_egress #(
   wire can2 = |(resv_q & live_q & om2);
   wire can3 = |(resv_q & live_q & om3);
 
-  always @* begin
-    pop_cnt = 3'd0;
-    if (can0) begin
-      pop_cnt = 3'd1;
-      if (can1) begin
-        pop_cnt = 3'd2;
-        if (can2) begin
-          pop_cnt = 3'd3;
-          if (can3) pop_cnt = 3'd4;
+  // The contiguous head test naturally produces a thermometer code. Consume
+  // that form directly in lane/ROB control; the binary count now only feeds
+  // the registered occupancy credit.
+  assign pop_therm[0] = can0;
+  assign pop_therm[1] = pop_therm[0] & can1;
+  assign pop_therm[2] = pop_therm[1] & can2;
+  assign pop_therm[3] = pop_therm[2] & can3;
+  assign pop_cnt[2] = pop_therm[3];
+  assign pop_cnt[1] = pop_therm[1] & ~pop_therm[3];
+  assign pop_cnt[0] = pop_therm[0] ^ pop_therm[1]
+                    ^ pop_therm[2] ^ pop_therm[3];
+
+  // Four consecutive physical ROB positions contain exactly one packet for
+  // each output lane. Reuse the one-hot head rotations to select that entry,
+  // avoiding binary sequence arithmetic and address muxing.
+  wire [D-1:0] head4_oh = om0 | om1 | om2 | om3;
+  wire [D-1:0] retire_oh = ({D{pop_therm[0]}} & om0)
+                         | ({D{pop_therm[1]}} & om1)
+                         | ({D{pop_therm[2]}} & om2)
+                         | ({D{pop_therm[3]}} & om3);
+  wire [3:0] out_act;
+  wire [127:0] out_dat [0:3];
+  genvar gl, ge, gb, gd;
+  generate
+    for (gl = 0; gl < 4; gl = gl + 1) begin : g_lane_select
+      wire [D/4-1:0] head_lane;
+      wire [D/4-1:0] retire_lane;
+      for (ge = 0; ge < D/4; ge = ge + 1) begin : g_lane_entry
+        assign head_lane[ge] = head4_oh[gl + 4*ge];
+        assign retire_lane[ge] = retire_oh[gl + 4*ge];
+      end
+      assign out_act[gl] = |retire_lane;
+      for (gb = 0; gb < 128; gb = gb + 1) begin : g_lane_bit
+        wire [D/4-1:0] data_term;
+        for (gd = 0; gd < D/4; gd = gd + 1) begin : g_data_entry
+          assign data_term[gd] = head_lane[gd]
+                               & rob_data[gl + 4*gd][gb];
         end
+        assign out_dat[gl][gb] = |data_term;
       end
     end
-  end
-
-  // Lane mapping. rob_data already contains the registered FE result when the
-  // corresponding resv_q bit becomes visible, so no FEOUT bypass mux is used.
-  reg [3:0]    out_act;
-  reg [127:0]  out_dat [0:3];
-  integer l;
-  reg [1:0]     kl;
-  reg [AW-1:0]  osrc, osi;
-  always @* begin
-    for (l = 0; l < 4; l = l + 1) begin
-      kl         = l[1:0] - out_seq[1:0];
-      out_act[l] = ({1'b0, kl} < pop_cnt);
-      osrc       = out_seq[AW-1:0] + {{(AW-2){1'b0}}, kl};
-      osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
-      out_dat[l] = rob_data[osi];
-    end
-  end
+  endgenerate
 
   // registered PKTOUT
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) lane_v <= 4'b0;
     else        lane_v <= out_act;
   end
+  integer l;
   always @(posedge clk) begin
     for (l = 0; l < 4; l = l + 1)
       // lane_v qualifies lane_d_f.  Always writing the data removes the
