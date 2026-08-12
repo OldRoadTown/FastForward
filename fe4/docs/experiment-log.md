@@ -31,6 +31,7 @@
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob64-iq32-safe | 0 | 0 | 0 | E042：64 项 Storage ROB、32 项 IQ、寄存化分配边界 |
 | rob64-iq32-retire-decoupled | 0 | 0 | 0 | E046：E042 上解耦退休、issue commit 与 `old_u` 前瞻反馈 |
+| rob64-iq32-pipelined-old-u | 0 | 0 | 0 | E047：E046 上将 `old_u` 追赶拆成 16 项捕获与编码/推进两相 |
 
 ## 结果
 
@@ -46,6 +47,7 @@
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E042 | `0b9b8db4cde9cdca31840bc3f84bf52b6ad902c3` | rob64-iq32-safe | 6531 | 9933 | 25025 | — | — | — | — | — | — | — | V28 独立分支上的 Storage ROB / IQ 解耦候选：64 项数据/结果/退休 ROB，32 项描述符 IQ；IQ 分配预约寄存，32×32 顺序矩阵 + 五层 OR picker，一元 Kogge-Stone 四路空槽分配；ROB `old_u` 用 one-hot 影子和每拍 8 项 bounded catch-up。依赖重载 12073 cycles，dual/full 重载 6366/5931，普通重载 8 seeds 与依赖 3 seeds 全部通过。统一 Yosys 代理为 299113 AND / 190970 NOT、全设计深度 56、IQ 31、picker 47；V28 为 144256/94141、全设计 54、picker 44。重载 `cycles×depth` 粗代理相对 V28 -34.5%，但 AND+NOT 为 2.05×，必须用固定内网 STA/Area/Power/统一用例确认最终 T 与 Score。 |
 | E046 | `4e5324f2038c7554f6e892c024ed25ffc35eef3f` | rob64-iq32-retire-decoupled | 6660 | 9936 | 25026 | — | — | — | — | — | — | — | E042 正向时序候选：退休端删除冗余 `outp_q/pop_oh` 位图，以 `out_seq_q` 的 one-hot 影子和 `alloc_seq-out_seq` 有效数检查四个连续结果；去除 FEOUT→pop/data 同拍旁路，结果写入 ROB 后下一拍才可退休。picker 不再寄存 64-bit `picked_rob_q`，而由寄存的 8×8 坐标重建 ROB commit bitmap；`picked_iq_q` 直接使用 selector 的 one-hot；ROB `old_u` 仅消费已提交 `iss_q`，切断 picker→old_u 前瞻。quick、普通重载 9 seeds、依赖重载 3 seeds、dual/full 均通过；依赖重载 12159，dual/full 6524/6019。统一 memory-map + `abc -g simple` 后，经验门延迟名义全局路径从 E042 的 0.9225ns 降到 0.8675ns（`iss_q → old_u_q`，31 级，2 XOR + 13 AND + 14 OR + 1 MUX + 1 NOT），>0.355/>0.400ns 端点从 2503/1444 降到 1298/933；uncertainty=0.045ns 时，heavy `cycles×(path+uncertainty)` 代理改善 3.82%。旧 `make proxy` 口径为 292587 AND / 187482 NOT、全设计深度 54，较 E042 的 299113/190970、深度 56 同时下降；仍远未达到 0.4ns 周期，需继续优化 `old_u`、IQ ready 和 picker。 |
+| E047 | `f73db961727e846913b406f8990188b392c73d14` | rob64-iq32-pipelined-old-u | 6853 | — | — | — | — | — | — | — | — | — | 负向、隔离保留：把 `old_u` 追赶拆为 16 项 issued 窗口捕获和下一拍编码/推进。quick 全部通过，重载 seed 7 与依赖重载分别为 6853/12354；但统一 memory-map + `abc -g simple` 后名义关键路径反而为 0.9225ns（`issued_scan_q[14] → old_u_q[6]`，33 级，2 XOR + 14 AND + 15 OR + 1 MUX + 1 NOT），说明寄存输入后的 16 项编码仍与指针更新串联。相对 E046，heavy cycles +2.90%、组合周期 +6.34%；计入 0.045ns uncertainty，`cycles×(path+uncertainty)` 恶化 9.10%。不合入 E046，后续改攻 picker→结果预测→IQ ready 路径。 |
 
 ## 分支与提交约定
 
