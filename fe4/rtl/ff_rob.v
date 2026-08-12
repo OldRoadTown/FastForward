@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v60
-// Experiment   : E060-R64-IQ32-registered-scan-head
+// RTL revision : 4FE-safe-v61
+// Experiment   : E061-R64-IQ32-predecoded-bkpr-thresholds
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : registered next scan head removes adv_q state feedback
+// Changes      : replace acnt add/compare with fixed BKPR thresholds
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -275,12 +275,30 @@ module ff_rob #(
   // subtracting that registered credit here reconstructs the exact E058
   // occupancy decision while cutting resv -> pop encoder -> occ_q at a flop.
   // Preserve occ/win names because the testbench samples their causes.
-  wire [SW-1:0] occ = occ_q + {{(SW-3){1'b0}}, acnt}
-                            - {{(SW-3){1'b0}}, pop_cnt_q};
+  wire [SW-1:0] occ_base = occ_q - {{(SW-3){1'b0}}, pop_cnt_q};
+  wire [SW-1:0] occ = occ_base + {{(SW-3){1'b0}}, acnt};
   wire [SW-1:0] win = win_q + {{(SW-3){1'b0}}, acnt};
+  reg occ_over, win_over;
+  always @* begin
+    // acnt is only 0..4. Comparing the registered bases against five fixed
+    // constants in parallel keeps in_vld_q/acnt out of the seven-bit carry
+    // chain. occ/win above remain for testbench cause accounting.
+    case (acnt)
+      3'd0: begin occ_over = (occ_base > OCC_TH);
+                   win_over = (win_q > WIN_TH);       end
+      3'd1: begin occ_over = (occ_base > OCC_TH-{{(SW-1){1'b0}},1'b1});
+                   win_over = (win_q > WIN_TH-{{(SW-1){1'b0}},1'b1});  end
+      3'd2: begin occ_over = (occ_base > OCC_TH-{{(SW-2){1'b0}},2'd2});
+                   win_over = (win_q > WIN_TH-{{(SW-2){1'b0}},2'd2});  end
+      3'd3: begin occ_over = (occ_base > OCC_TH-{{(SW-2){1'b0}},2'd3});
+                   win_over = (win_q > WIN_TH-{{(SW-2){1'b0}},2'd3});  end
+      default: begin occ_over = (occ_base > OCC_TH-{{(SW-3){1'b0}},3'd4});
+                     win_over = (win_q > WIN_TH-{{(SW-3){1'b0}},3'd4}); end
+    endcase
+  end
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
-    else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH) || iq_over;
+    else        bkpr_r <= occ_over || win_over || iq_over;
   end
 
   // E005 updates the critical vector every cycle through its D input. This

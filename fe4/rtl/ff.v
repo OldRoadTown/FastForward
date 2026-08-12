@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v60
-// Experiment   : E060-R64-IQ32-registered-scan-head
+// RTL revision : 4FE-safe-v61
+// Experiment   : E061-R64-IQ32-predecoded-bkpr-thresholds
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : register next scan head for oldest-unissued lookahead
+// Changes      : replace acnt add/compare with fixed BKPR thresholds
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
