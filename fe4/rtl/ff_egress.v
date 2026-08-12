@@ -1,14 +1,14 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
+// RTL revision : 4FE-safe-v46
+// Experiment   : E046-R64-IQ32-onehot-retire
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : restore the 64-entry in-order data-read window
+// Changes      : registered-result retirement from a one-hot head window
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
-// arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
+// is detected from registered result state. PKTOUT is registered.
 // =============================================================================
 module ff_egress #(
   parameter D   = 64,
@@ -18,45 +18,37 @@ module ff_egress #(
 )(
   input  wire                clk,
   input  wire                rst_n,
+  input  wire [SW-1:0]       alloc_seq,
   input  wire [SW-1:0]       out_seq,
+  input  wire [D-1:0]        out_oh,
   input  wire [D-1:0]        resv_q,
-  input  wire [D-1:0]        outp_q,
-  input  wire [D-1:0]        res_now,
   input  wire [D*128-1:0]    rob_data_f,
-  input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
-  input  wire [NFE*128-1:0]  fe_od_f,
   output reg  [2:0]          pop_cnt,
-  output reg  [D-1:0]        pop_oh,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
   output reg  [511:0]        lane_d_f       // registered PKTOUT data, 4 x 128
 );
 
   // unpack
   wire [127:0] rob_data [0:D-1];
-  wire [1:0]   rob_src  [0:D-1];
-  wire [127:0] fe_od    [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
       assign rob_data[gi] = rob_data_f[gi*128 +: 128];
-      assign rob_src[gi]  = rob_src_f[gi*2 +: 2];
-    end
-    for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uo
-      assign fe_od[gi] = fe_od_f[gi*128 +: 128];
     end
   endgenerate
 
-  // Same-cycle result bypass remains part of the completion check.
-  wire [D-1:0] cmpl = resv_q | res_now;
-
-  wire [AW-1:0] oidx0 = out_seq[AW-1:0];
-  wire [AW-1:0] oidx1 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd1};
-  wire [AW-1:0] oidx2 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd2};
-  wire [AW-1:0] oidx3 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd3};
-  wire can0 = cmpl[oidx0] & ~outp_q[oidx0];
-  wire can1 = cmpl[oidx1] & ~outp_q[oidx1];
-  wire can2 = cmpl[oidx2] & ~outp_q[oidx2];
-  wire can3 = cmpl[oidx3] & ~outp_q[oidx3];
+  // Fixed rotations of the one-hot retirement head turn each completion read
+  // into an AND plus a balanced OR tree. A result becomes eligible one cycle
+  // after FEOUT, when ROB data and state have both been registered.
+  wire [D-1:0] om0 = out_oh;
+  wire [D-1:0] om1 = {out_oh[D-2:0], out_oh[D-1]};
+  wire [D-1:0] om2 = {out_oh[D-3:0], out_oh[D-1:D-2]};
+  wire [D-1:0] om3 = {out_oh[D-4:0], out_oh[D-1:D-3]};
+  wire [SW-1:0] retire_avail = alloc_seq - out_seq;
+  wire can0 = (retire_avail > 0) && |(resv_q & om0);
+  wire can1 = (retire_avail > 1) && |(resv_q & om1);
+  wire can2 = (retire_avail > 2) && |(resv_q & om2);
+  wire can3 = (retire_avail > 3) && |(resv_q & om3);
 
   always @* begin
     pop_cnt = 3'd0;
@@ -72,15 +64,8 @@ module ff_egress #(
     end
   end
 
-  always @* begin
-    pop_oh = {D{1'b0}};
-    if (pop_cnt > 3'd0) pop_oh[oidx0] = 1'b1;
-    if (pop_cnt > 3'd1) pop_oh[oidx1] = 1'b1;
-    if (pop_cnt > 3'd2) pop_oh[oidx2] = 1'b1;
-    if (pop_cnt > 3'd3) pop_oh[oidx3] = 1'b1;
-  end
-
-  // lane mapping + same-cycle result data mux
+  // Lane mapping. rob_data already contains the registered FE result when the
+  // corresponding resv_q bit becomes visible, so no FEOUT bypass mux is used.
   reg [3:0]    out_act;
   reg [127:0]  out_dat [0:3];
   integer l;
@@ -92,7 +77,7 @@ module ff_egress #(
       out_act[l] = ({1'b0, kl} < pop_cnt);
       osrc       = out_seq[AW-1:0] + {{(AW-2){1'b0}}, kl};
       osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
-      out_dat[l] = res_now[osi] ? fe_od[rob_src[osi]] : rob_data[osi];
+      out_dat[l] = rob_data[osi];
     end
   end
 

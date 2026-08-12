@@ -2,12 +2,12 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
+// RTL revision : 4FE-safe-v46
+// Experiment   : E046-R64-IQ32-onehot-retire
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : 64-entry storage/retirement ROB; IQ occupancy drives issue BKPR
+// Changes      : one-hot retirement head; remove redundant popped-state bitmap
 //
-// Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
+// Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
 // per packet) and is RETAINED after output until the entry is re-allocated,
 // so late dependents (window = 7) can still read it; the BKPR issue window
@@ -42,7 +42,6 @@ module ff_rob #(
   input  wire [D-1:0]        picked,
   input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
   input  wire                iq_over,
-  input  wire [D-1:0]        pop_oh,
   input  wire [2:0]          pop_cnt,
   // state exports
   output wire [D-1:0]        res_now_o,
@@ -52,7 +51,7 @@ module ff_rob #(
   output wire [D-1:0]        rdy_o,
   output wire [D-1:0]        crit_o,
   output wire [D-1:0]        resv_o,
-  output wire [D-1:0]        outp_o,
+  output wire [D-1:0]        out_oh_o,
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
   output wire [D*AW-1:0]     rob_tgt_f,
@@ -128,10 +127,10 @@ module ff_rob #(
   reg [D-1:0]  wtg_q;                   // waiting for dependency result
   reg [D-1:0]  iss_q;                   // picked/issued
   reg [D-1:0]  resv_q;                  // result present (retained after pop)
-  reg [D-1:0]  outp_q;                  // popped to PKTOUT
 
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
+  reg [D-1:0]  out_oh_q;                // physical one-hot retirement head
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
   reg [D-1:0]  old_u_oh_q;              // physical one-hot form of old_u_q
 
@@ -167,7 +166,12 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   reg [SW-1:0] adv;
   reg [SW-1:0] adv_raw, dist_f;
-  wire [D-1:0] iss_eff = iss_q | picked;
+  // Consume only committed issue state here. Including the incoming picked
+  // bitmap saves at most one old_u catch-up cycle, but couples the registered
+  // picker-coordinate decode back through the eight-entry window and priority
+  // encoder. The bounded window still advances by up to eight per cycle, twice
+  // the maximum issue rate, so this one-cycle lag cannot accumulate.
+  wire [D-1:0] iss_eff = iss_q;
   wire [7:0] issued_win;
   genvar gw;
   generate
@@ -183,9 +187,6 @@ module ff_rob #(
   endgenerate
   wire [3:0] first_gap = pe8(~issued_win);
   always @* begin
-    // picked is now the registered issue/commit bitmap.  Include it in the
-    // look-ahead so delaying the ROB state write until issue does not add an
-    // extra cycle to oldest-unissued pointer advancement.
     adv_raw = first_gap[3]
               ? {{(SW-3){1'b0}}, first_gap[2:0]}
               : {{(SW-4){1'b0}}, 4'd8};
@@ -221,10 +222,10 @@ module ff_rob #(
     else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH) || iq_over;
   end
 
-  // E005 updates these control vectors every cycle through their D inputs.
-  // This preserves the original precedence (critical set beats alloc clear;
-  // alloc clear beats pop set) without placing k_tgt/pop_oh on per-bit clock
-  // gate enables.
+  // E005 updates the critical vector every cycle through its D input. This
+  // preserves the original precedence without putting k_tgt on per-bit clock
+  // gate enables. Retirement no longer needs a per-entry popped bitmap:
+  // out_seq_q/out_oh_q advance on every pop, so an entry cannot pop twice.
   reg [D-1:0] crit_set_oh;
   integer ck;
   always @* begin
@@ -233,16 +234,24 @@ module ff_rob #(
       if (kw_vld[ck]) crit_set_oh[k_tgt[ck]] = 1'b1;
   end
   wire [D-1:0] crit_n = (crit_q & ~alloc_oh) | crit_set_oh;
-  wire [D-1:0] outp_n = (outp_q | pop_oh) & ~alloc_oh;
 
   always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      crit_q <= {D{1'b0}};
-      outp_q <= {D{1'b0}};
-    end else begin
-      crit_q <= crit_n;
-      outp_q <= outp_n;
-    end
+    if (!rst_n) crit_q <= {D{1'b0}};
+    else        crit_q <= crit_n;
+  end
+
+  // Four fixed rotations replace binary-addressed 64:1 retirement-state
+  // reads in ff_egress and keep out_seq_q's physical position explicit.
+  reg [D-1:0] out_oh_n;
+  always @* begin
+    case (pop_cnt)
+      3'd0: out_oh_n = out_oh_q;
+      3'd1: out_oh_n = {out_oh_q[D-2:0], out_oh_q[D-1]};
+      3'd2: out_oh_n = {out_oh_q[D-3:0], out_oh_q[D-1:D-2]};
+      3'd3: out_oh_n = {out_oh_q[D-4:0], out_oh_q[D-1:D-3]};
+      3'd4: out_oh_n = {out_oh_q[D-5:0], out_oh_q[D-1:D-4]};
+      default: out_oh_n = out_oh_q;
+    endcase
   end
 
   // -------------------------------------------------------------------------
@@ -256,6 +265,7 @@ module ff_rob #(
       resv_q      <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
+      out_oh_q    <= {{(D-1){1'b0}}, 1'b1};
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
     end else begin
@@ -278,6 +288,7 @@ module ff_rob #(
       end
       alloc_seq_q <= alloc_seq_q + {{(SW-3){1'b0}}, acnt};
       out_seq_q   <= out_seq_q + {{(SW-3){1'b0}}, pop_cnt};
+      out_oh_q    <= out_oh_n;
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
     end
@@ -316,7 +327,7 @@ module ff_rob #(
   assign rdy_o       = rdy_q;
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
-  assign outp_o      = outp_q;
+  assign out_oh_o    = out_oh_q;
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;

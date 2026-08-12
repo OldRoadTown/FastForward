@@ -1,7 +1,7 @@
 // =============================================================================
 // ff_iq_pick - balanced-tree picker for the decoupled issue queue
 //
-// Experiment : E042
+// Experiment : E046
 // Base       : 4FE-safe-v28 / E029-R32
 //
 // The timing-sensitive search is bounded by QD=32 even though storage ROB is
@@ -65,7 +65,6 @@ module ff_iq_pick #(
   endgenerate
 
   reg [QD-1:0] picked_iq_q;
-  reg [RD-1:0] picked_rob_q;
   wire [QD-1:0] ready_avail = iq_v & ~picked_iq_q
                                 & (iq_rdy | (WAKE_BYPASS ? iq_wake
                                                          : {QD{1'b0}}));
@@ -323,10 +322,13 @@ module ff_iq_pick #(
   reg [7:0]     pk_bank_oh_n [0:NFE-1];
   reg [7:0]     pk_local_oh_n [0:NFE-1];
   reg [QD-1:0] picked_iq_n;
-  reg [RD-1:0] picked_rob_n;
   always @* begin
     picked_iq_n  = {QD{1'b0}};
-    picked_rob_n = {RD{1'b0}};
+    // The primary selectors already provide one-hot IQ slots. Use those masks
+    // directly instead of carrying a binary IQ index through the candidate
+    // record and decoding it again at the picked_iq_q D input.
+    for (f = 0; f < NFE; f = f + 1)
+      picked_iq_n = picked_iq_n | (pri_oh[f] & {QD{fnd[f]}});
     for (f = 0; f < NFE; f = f + 1) begin
       pk_v_n[f]   = fnd[f] | (st1_v && (st1_rr == f[1:0]))
                              | (st2_v && (st2_rr == f[1:0]));
@@ -345,9 +347,11 @@ module ff_iq_pick #(
       pk_local_oh_n[f] = 8'b0;
       pk_bank_oh_n[f][pk_idx_n[f][5:3]] = 1'b1;
       pk_local_oh_n[f][pk_idx_n[f][2:0]] = 1'b1;
-      if (pk_v_n[f]) begin
+      // Own-class picks are already present through pri_oh above. Only the
+      // optional steal receivers need a binary-index insertion here.
+      if ((st1_v && (st1_rr == f[1:0]))
+          || (st2_v && (st2_rr == f[1:0]))) begin
         picked_iq_n[pk_qix_n[f]] = 1'b1;
-        picked_rob_n[pk_idx_n[f]] = 1'b1;
       end
     end
   end
@@ -356,11 +360,9 @@ module ff_iq_pick #(
     if (!rst_n) begin
       pk_v_int    <= {NFE{1'b0}};
       picked_iq_q <= {QD{1'b0}};
-      picked_rob_q <= {RD{1'b0}};
     end else begin
       pk_v_int    <= pk_v_n;
       picked_iq_q <= picked_iq_n;
-      picked_rob_q <= picked_rob_n;
     end
   end
   always @(posedge clk) begin
@@ -381,7 +383,11 @@ module ff_iq_pick #(
 
   always @* pk_v_q = pk_v_int;
   assign picked_iq  = picked_iq_q;
-  assign picked_rob = picked_rob_q;
+  // Reconstruct the ROB commit bitmap from registered 8x8 coordinates. This
+  // preserves the original commit cycle while moving the 64-bit decode behind
+  // the picker register boundary; every output bit is only two ANDs plus the
+  // four-FE OR reduction away from registered state.
+  wire [RD-1:0] pk_rob_oh [0:NFE-1];
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_export
       assign pk_idx_f[gf*RAW +: RAW] = pk_idx_q[gf];
@@ -389,10 +395,17 @@ module ff_iq_pick #(
       assign pk_lat_f[gf*2 +: 2] = pk_lat_q[gf];
       assign pk_bank_oh_f[gf*8 +: 8] = pk_bank_oh_q[gf];
       assign pk_local_oh_f[gf*8 +: 8] = pk_local_oh_q[gf];
+      for (gi = 0; gi < RD; gi = gi + 1) begin : g_rob_commit
+        assign pk_rob_oh[gf][gi] = pk_v_int[gf]
+                                      & pk_bank_oh_q[gf][gi/8]
+                                      & pk_local_oh_q[gf][gi%8];
+      end
     end
     for (gi = 0; gi < RD; gi = gi + 1) begin : g_src
       assign rob_src_f[gi*2 +: 2] = rob_src[gi];
     end
   endgenerate
+  assign picked_rob = pk_rob_oh[0] | pk_rob_oh[1]
+                      | pk_rob_oh[2] | pk_rob_oh[3];
 
 endmodule

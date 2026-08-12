@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v42
-// Experiment   : E042-R64-IQ32
+// RTL revision : 4FE-safe-v46
+// Experiment   : E046-R64-IQ32-onehot-retire
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : decouple a 64-entry storage ROB from a 32-entry issue queue
+// Changes      : one-hot retirement head; remove same-cycle result-to-pop path
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -112,7 +112,8 @@ module ff #(
   wire [4*AW-1:0]     k_tgt_f;
 
   wire [D-1:0]        res_now, res_pred, res_known, wake_now;
-  wire [D-1:0]        rdy_q, crit_q, resv_q, outp_q, rob_isdep;
+  wire [D-1:0]        rdy_q, crit_q, resv_q, rob_isdep;
+  wire [D-1:0]        out_oh;
   wire [D*128-1:0]    rob_data_f;
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
@@ -147,7 +148,6 @@ module ff #(
   wire [NFE*2-1:0]    fwd_l_f;
 
   wire [2:0]          pop_cnt;
-  wire [D-1:0]        pop_oh;
   wire [3:0]          lane_v;
   wire [511:0]        lane_d_f;
 
@@ -175,10 +175,10 @@ module ff #(
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
     .fe_od_f(fe_od_f),
     .picked(picked), .rob_src_f(rob_src_f), .iq_over(iq_over_n),
-    .pop_oh(pop_oh), .pop_cnt(pop_cnt),
+    .pop_cnt(pop_cnt),
     .res_now_o(res_now), .res_pred_o(res_pred), .res_known_o(res_known),
     .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
-    .resv_o(resv_q), .outp_o(outp_q),
+    .resv_o(resv_q), .out_oh_o(out_oh),
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
@@ -285,10 +285,9 @@ module ff #(
 
   ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_egress (
     .clk(clk), .rst_n(rst_n),
-    .out_seq(out_seq),
-    .resv_q(resv_q), .outp_q(outp_q), .res_now(res_now),
-    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
-    .pop_cnt(pop_cnt), .pop_oh(pop_oh),
+    .alloc_seq(alloc_seq), .out_seq(out_seq),
+    .out_oh(out_oh), .resv_q(resv_q),
+    .rob_data_f(rob_data_f), .pop_cnt(pop_cnt),
     .lane_v(lane_v), .lane_d_f(lane_d_f)
   );
 
