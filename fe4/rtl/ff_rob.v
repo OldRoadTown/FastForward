@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v48
-// Experiment   : E048-R64-IQ32-lookahead-old-u
+// RTL revision : 4FE-safe-v49
+// Experiment   : E049-R64-IQ32-lat0-wake-boundary
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : register the bounded old_u advance one cycle ahead
+// Changes      : latency-0 dependents wake on registered actual-return tags
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -149,13 +149,16 @@ module ff_rob #(
     end
   end
 
-  // pre-wake: target result arrives next cycle -> dependent can enter the FE
-  // in the same cycle the result shows up on FEOUT (dp taken from the bus)
+  // Pre-wake from slot2 remains for latency classes 1..3. Latency class 0 has
+  // no slot2 residence, so it wakes from the registered slot1/actual-return
+  // tag. resv is written on that same edge; with WAKE_BYPASS=0 the dependent
+  // reaches I1 only after the retained result is available.
   reg [D-1:0] wake_now;
   integer e;
   always @* begin
     for (e = 0; e < D; e = e + 1)
-      wake_now[e] = wtg_q[e] & res_pred_r[rob_tgt[e]];
+      wake_now[e] = wtg_q[e]
+                    & (res_pred_r[rob_tgt[e]] | res_now_r[rob_tgt[e]]);
   end
 
   // -------------------------------------------------------------------------
@@ -330,7 +333,9 @@ module ff_rob #(
   endgenerate
 
   assign res_now_o   = res_now_r;
-  assign res_pred_o  = res_pred_r;
+  // The IQ consumes this as a dependency-ready event. Including actual return
+  // supplies the latency-0 case after removing its same-cycle issue bypass.
+  assign res_pred_o  = res_pred_r | res_now_r;
   assign res_known_o = resv_q | res_now_r | res_pred_r;
   assign wake_now_o  = wake_now;
   assign rdy_o       = rdy_q;

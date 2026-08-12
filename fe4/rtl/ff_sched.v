@@ -4,9 +4,10 @@
 // During cycle x, slot s (1..4) holds a result exiting at cycle x+(s-1);
 // an issue during cycle u with lat class c books slot c+1 -> exact
 // output-collision bookkeeping even for mixed-latency (stolen) streams.
-//   exit = slot1, prediction (exit next cycle) = slot2 (plus a lat-class-0
-//   packet issuing this cycle). sched_v is exported for the pick stage's
-//   slot-conflict checks.
+//   exit = slot1, prediction (exit next cycle) = slot2.  A latency-class-0
+//   issue goes directly to slot1 and therefore wakes dependents from the
+//   registered actual-return tag instead of a same-cycle issue-tag bypass.
+//   sched_v is exported for the pick stage's slot-conflict checks.
 // =============================================================================
 module ff_sched #(
   parameter AW  = 6,
@@ -65,11 +66,10 @@ module ff_sched #(
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_exit
       assign exit_v[gf]              = sched_v[gf][1];
       assign exit_idx_f[gf*AW +: AW] = sched_idx[gf][1];
-      // lat-class-0 issue this cycle also exits next cycle
-      assign pre_v[gf]               = sched_v[gf][2]
-                                     | (issue_v[gf] & (issue_lat[gf] == 2'd0));
-      assign pre_idx_f[gf*AW +: AW]  = sched_v[gf][2] ? sched_idx[gf][2]
-                                                      : issue_idx[gf];
+      // Keep prediction strictly behind the scheduler register boundary.
+      // This removes pk_idx_q -> issue -> predecode -> IQ-ready from one cycle.
+      assign pre_v[gf]               = sched_v[gf][2];
+      assign pre_idx_f[gf*AW +: AW]  = sched_idx[gf][2];
       assign sched_v_f[gf*4 +: 4]    = sched_v[gf];
     end
   endgenerate

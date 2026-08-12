@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v48
-// Experiment   : E048-R64-IQ32-lookahead-old-u
+// RTL revision : 4FE-safe-v49
+// Experiment   : E049-R64-IQ32-lat0-wake-boundary
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : precompute the bounded old_u advance across a register
+// Changes      : remove same-cycle latency-0 issue from result prediction
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
