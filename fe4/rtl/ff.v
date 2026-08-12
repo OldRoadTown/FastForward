@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v52
-// Experiment   : E052-R64-IQ32-retire-live-vector
+// RTL revision : 4FE-safe-v53
+// Experiment   : E053-R64-IQ32-postreg-coordinate-decode
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : track unretired ROB entries explicitly for retirement
+// Changes      : decode IQ/ROB coordinates after the picker registers
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
