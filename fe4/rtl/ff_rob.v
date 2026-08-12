@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v59
-// Experiment   : E059-R64-IQ32-onehot-retirement-boundary
+// RTL revision : 4FE-safe-v60
+// Experiment   : E060-R64-IQ32-registered-scan-head
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : one-hot retirement feedback; registered occupancy credit
+// Changes      : registered next scan head removes adv_q state feedback
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -135,6 +135,7 @@ module ff_rob #(
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
   reg [D-1:0]  old_u_oh_q;              // physical one-hot form of old_u_q
   reg [SW-1:0] adv_q;                   // next bounded catch-up, precomputed
+  reg [D-1:0]  scan_oh_q;               // old_u_oh_q pre-rotated by adv_q
   reg [2:0]    pop_cnt_q;               // prior-cycle retirement credit
   reg [SW-1:0] occ_q;                   // occupancy plus pop_cnt_q credit
   reg [SW-1:0] win_q;                   // alloc_seq_q - old_u_q
@@ -207,11 +208,11 @@ module ff_rob #(
     endcase
   end
 
-  // Scan from the position reached by the already-registered advance. This
-  // forms a one-stage look-ahead recurrence: old_u/onehot consume adv_q while
-  // the same cycle computes adv_n for the following edge. Newly committed
-  // issue bits may conservatively insert a zero-advance bubble, but can never
-  // make the pointer skip an unissued entry.
+  // scan_oh_q is registered beside adv_q and already points at the position
+  // that old_u reaches on this edge.  The state scan therefore has no adv_q ->
+  // 64-bit rotation dependency.  Prefix ANDs are written as a three-level
+  // parallel network; run_oh directly represents lengths 0..8 and is then
+  // encoded to the small advance register.
   wire [D-1:0] iss_eff = iss_q & live_q;
   wire [7:0] issued_win;
   genvar gw;
@@ -219,18 +220,51 @@ module ff_rob #(
     for (gw = 0; gw < 8; gw = gw + 1) begin : g_issue_window
       wire [D-1:0] win_mask;
       if (gw == 0)
-        assign win_mask = old_u_oh_n;
+        assign win_mask = scan_oh_q;
       else
-        assign win_mask = {old_u_oh_n[D-gw-1:0],
-                           old_u_oh_n[D-1:D-gw]};
+        assign win_mask = {scan_oh_q[D-gw-1:0],
+                           scan_oh_q[D-1:D-gw]};
       assign issued_win[gw] = |(iss_eff & win_mask);
     end
   endgenerate
-  wire [3:0] first_gap = pe8(~issued_win);
+  wire [7:0] pref1 = issued_win & {issued_win[6:0], 1'b1};
+  wire [7:0] pref2 = pref1 & {pref1[5:0], 2'b11};
+  wire [7:0] pref4 = pref2 & {pref2[3:0], 4'b1111};
+  wire [8:0] run_oh = {pref4[7],
+                       pref4[6] & ~issued_win[7],
+                       pref4[5] & ~issued_win[6],
+                       pref4[4] & ~issued_win[5],
+                       pref4[3] & ~issued_win[4],
+                       pref4[2] & ~issued_win[3],
+                       pref4[1] & ~issued_win[2],
+                       pref4[0] & ~issued_win[1],
+                       ~issued_win[0]};
   always @* begin
-    adv_n = first_gap[3]
-            ? {{(SW-3){1'b0}}, first_gap[2:0]}
-            : {{(SW-4){1'b0}}, 4'd8};
+    adv_n = {SW{1'b0}};
+    if (run_oh[1]) adv_n = {{(SW-1){1'b0}}, 1'b1};
+    if (run_oh[2]) adv_n = {{(SW-2){1'b0}}, 2'd2};
+    if (run_oh[3]) adv_n = {{(SW-2){1'b0}}, 2'd3};
+    if (run_oh[4]) adv_n = {{(SW-3){1'b0}}, 3'd4};
+    if (run_oh[5]) adv_n = {{(SW-3){1'b0}}, 3'd5};
+    if (run_oh[6]) adv_n = {{(SW-3){1'b0}}, 3'd6};
+    if (run_oh[7]) adv_n = {{(SW-3){1'b0}}, 3'd7};
+    if (run_oh[8]) adv_n = {{(SW-4){1'b0}}, 4'd8};
+  end
+
+  reg [D-1:0] scan_oh_n;
+  always @* begin
+    case (adv_n[3:0])
+      4'd0: scan_oh_n = old_u_oh_n;
+      4'd1: scan_oh_n = {old_u_oh_n[D-2:0], old_u_oh_n[D-1]};
+      4'd2: scan_oh_n = {old_u_oh_n[D-3:0], old_u_oh_n[D-1:D-2]};
+      4'd3: scan_oh_n = {old_u_oh_n[D-4:0], old_u_oh_n[D-1:D-3]};
+      4'd4: scan_oh_n = {old_u_oh_n[D-5:0], old_u_oh_n[D-1:D-4]};
+      4'd5: scan_oh_n = {old_u_oh_n[D-6:0], old_u_oh_n[D-1:D-5]};
+      4'd6: scan_oh_n = {old_u_oh_n[D-7:0], old_u_oh_n[D-1:D-6]};
+      4'd7: scan_oh_n = {old_u_oh_n[D-8:0], old_u_oh_n[D-1:D-7]};
+      4'd8: scan_oh_n = {old_u_oh_n[D-9:0], old_u_oh_n[D-1:D-8]};
+      default: scan_oh_n = old_u_oh_n;
+    endcase
   end
 
   // -------------------------------------------------------------------------
@@ -295,6 +329,7 @@ module ff_rob #(
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
       adv_q       <= {SW{1'b0}};
+      scan_oh_q   <= {{(D-1){1'b0}}, 1'b1};
       pop_cnt_q   <= 3'd0;
       occ_q       <= {SW{1'b0}};
       win_q       <= {SW{1'b0}};
@@ -323,6 +358,7 @@ module ff_rob #(
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
       adv_q       <= adv_n;
+      scan_oh_q   <= scan_oh_n;
       pop_cnt_q   <= pop_cnt;
       occ_q       <= occ;
       win_q       <= win_q + {{(SW-3){1'b0}}, acnt} - adv_q;
