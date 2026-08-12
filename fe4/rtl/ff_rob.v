@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v46
-// Experiment   : E046-R64-IQ32-onehot-retire
+// RTL revision : 4FE-safe-v48
+// Experiment   : E048-R64-IQ32-lookahead-old-u
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : one-hot retirement head; remove redundant popped-state bitmap
+// Changes      : register the bounded old_u advance one cycle ahead
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -133,6 +133,7 @@ module ff_rob #(
   reg [D-1:0]  out_oh_q;                // physical one-hot retirement head
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
   reg [D-1:0]  old_u_oh_q;              // physical one-hot form of old_u_q
+  reg [SW-1:0] adv_q;                   // next bounded catch-up, precomputed
 
   // -------------------------------------------------------------------------
   // result decode + wake-up
@@ -164,39 +165,17 @@ module ff_rob #(
   // replaces the timing-dominant 64-entry global scan with eight parallel
   // indexed reads and a small priority encoder.
   // -------------------------------------------------------------------------
-  reg [SW-1:0] adv;
+  reg [SW-1:0] adv_n;
   reg [SW-1:0] adv_raw, dist_f;
   // Consume only committed issue state here. Including the incoming picked
   // bitmap saves at most one old_u catch-up cycle, but couples the registered
   // picker-coordinate decode back through the eight-entry window and priority
   // encoder. The bounded window still advances by up to eight per cycle, twice
   // the maximum issue rate, so this one-cycle lag cannot accumulate.
-  wire [D-1:0] iss_eff = iss_q;
-  wire [7:0] issued_win;
-  genvar gw;
-  generate
-    for (gw = 0; gw < 8; gw = gw + 1) begin : g_issue_window
-      wire [D-1:0] win_mask;
-      if (gw == 0)
-        assign win_mask = old_u_oh_q;
-      else
-        assign win_mask = {old_u_oh_q[D-gw-1:0],
-                           old_u_oh_q[D-1:D-gw]};
-      assign issued_win[gw] = |(iss_eff & win_mask);
-    end
-  endgenerate
-  wire [3:0] first_gap = pe8(~issued_win);
-  always @* begin
-    adv_raw = first_gap[3]
-              ? {{(SW-3){1'b0}}, first_gap[2:0]}
-              : {{(SW-4){1'b0}}, 4'd8};
-    dist_f     = alloc_seq_q - old_u_q;
-    adv = (adv_raw > dist_f) ? dist_f : adv_raw;
-  end
-  wire [SW-1:0] old_u_n = old_u_q + adv;
+  wire [SW-1:0] old_u_n = old_u_q + adv_q;
   reg [D-1:0] old_u_oh_n;
   always @* begin
-    case (adv[3:0])
+    case (adv_q[3:0])
       4'd0: old_u_oh_n = old_u_oh_q;
       4'd1: old_u_oh_n = {old_u_oh_q[D-2:0], old_u_oh_q[D-1]};
       4'd2: old_u_oh_n = {old_u_oh_q[D-3:0], old_u_oh_q[D-1:D-2]};
@@ -208,6 +187,34 @@ module ff_rob #(
       4'd8: old_u_oh_n = {old_u_oh_q[D-9:0], old_u_oh_q[D-1:D-8]};
       default: old_u_oh_n = old_u_oh_q;
     endcase
+  end
+
+  // Scan from the position reached by the already-registered advance. This
+  // forms a one-stage look-ahead recurrence: old_u/onehot consume adv_q while
+  // the same cycle computes adv_n for the following edge. Newly committed
+  // issue bits may conservatively insert a zero-advance bubble, but can never
+  // make the pointer skip an unissued entry.
+  wire [D-1:0] iss_eff = iss_q;
+  wire [7:0] issued_win;
+  genvar gw;
+  generate
+    for (gw = 0; gw < 8; gw = gw + 1) begin : g_issue_window
+      wire [D-1:0] win_mask;
+      if (gw == 0)
+        assign win_mask = old_u_oh_n;
+      else
+        assign win_mask = {old_u_oh_n[D-gw-1:0],
+                           old_u_oh_n[D-1:D-gw]};
+      assign issued_win[gw] = |(iss_eff & win_mask);
+    end
+  endgenerate
+  wire [3:0] first_gap = pe8(~issued_win);
+  always @* begin
+    adv_raw = first_gap[3]
+              ? {{(SW-3){1'b0}}, first_gap[2:0]}
+              : {{(SW-4){1'b0}}, 4'd8};
+    dist_f = alloc_seq_q - old_u_n;
+    adv_n  = (adv_raw > dist_f) ? dist_f : adv_raw;
   end
 
   // -------------------------------------------------------------------------
@@ -268,6 +275,7 @@ module ff_rob #(
       out_oh_q    <= {{(D-1){1'b0}}, 1'b1};
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
+      adv_q       <= {SW{1'b0}};
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
@@ -291,6 +299,7 @@ module ff_rob #(
       out_oh_q    <= out_oh_n;
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
+      adv_q       <= adv_n;
     end
   end
 
