@@ -1,18 +1,21 @@
 // =============================================================================
 // ff_iq - decoupled 32-entry issue queue for a 64-entry storage ROB
 //
-// Experiment : E042
+// Experiment : E050
 // Base       : 4FE-safe-v28 / E029-R32
 //
 // Only scheduling descriptors live here. Packet/result data and retirement
 // state remain in ff_rob. IQ slots are allocated from the free list, so their
 // physical positions are independent of ROB tags. A 32x32 allocation-order
 // matrix records the relative age once, keeping tag arithmetic out of pick.
+// Wake-up compares the four registered scheduler/result tags directly against
+// each six-bit target instead of decoding them into a 64-bit bitmap first.
 // =============================================================================
 module ff_iq #(
   parameter QD  = 32,
   parameter QAW = 5,
-  parameter RAW = 6
+  parameter RAW = 6,
+  parameter NFE = 4
 )(
   input  wire                    clk,
   input  wire                    rst_n,
@@ -23,8 +26,11 @@ module ff_iq #(
   input  wire [3:0]              slot_isdep,
   input  wire [3:0]              kw_vld,
   input  wire [4*RAW-1:0]        k_tgt_f,
-  input  wire [(1<<RAW)-1:0]     res_pred,
-  input  wire [(1<<RAW)-1:0]     res_known,
+  input  wire [(1<<RAW)-1:0]     res_known, // retained/stored result bitmap
+  input  wire [NFE-1:0]          pre_v,
+  input  wire [NFE*RAW-1:0]      pre_idx_f,
+  input  wire [NFE-1:0]          exit_v,
+  input  wire [NFE*RAW-1:0]      exit_idx_f,
   input  wire [QD-1:0]           picked_iq,
   input  wire [2:0]              picked_count,
   output wire [QD-1:0]           iq_v_o,
@@ -43,12 +49,18 @@ module ff_iq #(
   wire [1:0]    slot_lat [0:3];
   wire [RAW-1:0] slot_tgt [0:3];
   wire [RAW-1:0] k_tgt [0:3];
+  wire [RAW-1:0] pre_idx [0:NFE-1];
+  wire [RAW-1:0] exit_idx [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < 4; gi = gi + 1) begin : g_unpack
       assign slot_lat[gi] = slot_lat_f[gi*2 +: 2];
       assign slot_tgt[gi] = slot_tgt_f[gi*RAW +: RAW];
       assign k_tgt[gi]    = k_tgt_f[gi*RAW +: RAW];
+    end
+    for (gi = 0; gi < NFE; gi = gi + 1) begin : g_unpack_result_tags
+      assign pre_idx[gi]  = pre_idx_f[gi*RAW +: RAW];
+      assign exit_idx[gi] = exit_idx_f[gi*RAW +: RAW];
     end
   endgenerate
 
@@ -62,10 +74,17 @@ module ff_iq #(
   reg [QD-1:0]  older_q [0:QD-1];
 
   reg [QD-1:0] wake_now;
-  integer e;
+  reg [QD-1:0] wake_match;
+  integer e, wf;
   always @* begin
-    for (e = 0; e < QD; e = e + 1)
-      wake_now[e] = valid_q[e] & wait_q[e] & res_pred[tgt_q[e]];
+    for (e = 0; e < QD; e = e + 1) begin
+      wake_match[e] = 1'b0;
+      for (wf = 0; wf < NFE; wf = wf + 1)
+        if ((pre_v[wf] && (pre_idx[wf] == tgt_q[e]))
+            || (exit_v[wf] && (exit_idx[wf] == tgt_q[e])))
+          wake_match[e] = 1'b1;
+      wake_now[e] = valid_q[e] & wait_q[e] & wake_match[e];
+    end
   end
 
   // One allocation batch is reserved while its metadata crosses the
@@ -164,6 +183,27 @@ module ff_iq #(
   reg           pend_isdep_q [0:3];
   reg           pend_crit_q [0:3];
 
+  // A pending descriptor can become ready either from a result already
+  // retained in the ROB or from one of the four registered scheduler/result
+  // tags.  Keep the tag comparison in six-bit form; building a 64-bit event
+  // bitmap and indexing it by pend_tgt recreates the path E050 removes.
+  wire [3:0] pend_event;
+  wire [3:0] pend_ready;
+  genvar gp;
+  generate
+    for (gp = 0; gp < 4; gp = gp + 1) begin : g_pending_result
+      assign pend_event[gp] = (pre_v[0] && (pre_idx[0] == pend_tgt_q[gp]))
+                            | (pre_v[1] && (pre_idx[1] == pend_tgt_q[gp]))
+                            | (pre_v[2] && (pre_idx[2] == pend_tgt_q[gp]))
+                            | (pre_v[3] && (pre_idx[3] == pend_tgt_q[gp]))
+                            | (exit_v[0] && (exit_idx[0] == pend_tgt_q[gp]))
+                            | (exit_v[1] && (exit_idx[1] == pend_tgt_q[gp]))
+                            | (exit_v[2] && (exit_idx[2] == pend_tgt_q[gp]))
+                            | (exit_v[3] && (exit_idx[3] == pend_tgt_q[gp]));
+      assign pend_ready[gp] = res_known[pend_tgt_q[gp]] | pend_event[gp];
+    end
+  endgenerate
+
   // Decode the four mutually exclusive allocation ranks once.  Metadata and
   // valid/state writes then use one parallel one-hot mux instead of four
   // cascaded procedural priority conditions.
@@ -195,22 +235,22 @@ module ff_iq #(
                               | (pend_tgt_q[3] & {RAW{alloc_lane[ga][3]}});
       assign slot_new_rdy[ga] = |(alloc_lane[ga]
                                   & {~pend_isdep_q[3]
-                                       | res_known[pend_tgt_q[3]],
+                                       | pend_ready[3],
                                      ~pend_isdep_q[2]
-                                       | res_known[pend_tgt_q[2]],
+                                       | pend_ready[2],
                                      ~pend_isdep_q[1]
-                                       | res_known[pend_tgt_q[1]],
+                                       | pend_ready[1],
                                      ~pend_isdep_q[0]
-                                       | res_known[pend_tgt_q[0]]});
+                                       | pend_ready[0]});
       assign slot_new_wtg[ga] = |(alloc_lane[ga]
                                   & {pend_isdep_q[3]
-                                       & ~res_known[pend_tgt_q[3]],
+                                       & ~pend_ready[3],
                                      pend_isdep_q[2]
-                                       & ~res_known[pend_tgt_q[2]],
+                                       & ~pend_ready[2],
                                      pend_isdep_q[1]
-                                       & ~res_known[pend_tgt_q[1]],
+                                       & ~pend_ready[1],
                                      pend_isdep_q[0]
-                                       & ~res_known[pend_tgt_q[0]]});
+                                       & ~pend_ready[0]});
       assign slot_new_crit[ga] = |(alloc_lane[ga]
                                    & {pend_crit_q[3], pend_crit_q[2],
                                       pend_crit_q[1], pend_crit_q[0]});

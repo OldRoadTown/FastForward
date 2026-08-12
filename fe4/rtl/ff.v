@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v49
-// Experiment   : E049-R64-IQ32-lat0-wake-boundary
+// RTL revision : 4FE-safe-v50
+// Experiment   : E050-R64-IQ32-direct-wake-tags
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : remove same-cycle latency-0 issue from result prediction
+// Changes      : compare four registered result tags directly inside the IQ
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -185,13 +185,14 @@ module ff #(
     .bkpr_r(pkt_in_bkpr)
   );
 
-  ff_iq #(.QD(QD), .QAW(QAW), .RAW(AW)) u_iq (
+  ff_iq #(.QD(QD), .QAW(QAW), .RAW(AW), .NFE(NFE)) u_iq (
     .clk(clk), .rst_n(rst_n),
     .acnt(acnt), .alloc_seq(alloc_seq),
     .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
     .slot_isdep(slot_isdep),
-    .kw_vld(kw_vld), .k_tgt_f(k_tgt_f), .res_pred(res_pred),
-    .res_known(res_known),
+    .kw_vld(kw_vld), .k_tgt_f(k_tgt_f), .res_known(resv_q),
+    .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .picked_iq(picked_iq), .picked_count(picked_count),
     .iq_v_o(iq_v), .iq_rdy_o(iq_rdy), .iq_crit_o(iq_crit),
     .iq_wake_o(iq_wake), .iq_rob_f(iq_rob_f),
