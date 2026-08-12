@@ -30,6 +30,7 @@
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob64-iq32-safe | 0 | 0 | 0 | E042：64 项 Storage ROB、32 项 IQ、寄存化分配边界 |
+| rob64-iq32-banked-picker | 0 | 0 | 0 | E045：E042 上增加 4×8 bank 候选寄存与跨 bank 归并 |
 
 ## 结果
 
@@ -44,6 +45,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E042 | `0b9b8db4cde9cdca31840bc3f84bf52b6ad902c3` | rob64-iq32-safe | 6531 | 9933 | 25025 | — | — | — | — | — | — | — | V28 独立分支上的 Storage ROB / IQ 解耦候选：64 项数据/结果/退休 ROB，32 项描述符 IQ；IQ 分配预约寄存，32×32 顺序矩阵 + 五层 OR picker，一元 Kogge-Stone 四路空槽分配；ROB `old_u` 用 one-hot 影子和每拍 8 项 bounded catch-up。依赖重载 12073 cycles，dual/full 重载 6366/5931，普通重载 8 seeds 与依赖 3 seeds 全部通过。统一 Yosys 代理为 299113 AND / 190970 NOT、全设计深度 56、IQ 31、picker 47；V28 为 144256/94141、全设计 54、picker 44。重载 `cycles×depth` 粗代理相对 V28 -34.5%，但 AND+NOT 为 2.05×，必须用固定内网 STA/Area/Power/统一用例确认最终 T 与 Score。 |
+| E045 | `7f8c8fd824dc0d75249c72b4e056a9deb9e7dc4f` | rob64-iq32-banked-picker | 7363 | 9985 | 25026 | — | — | — | — | — | — | — | 负向实验，不替换 E042：4 个 latency class × 4 个 interleaved bank 先各自寄存两个 normal/critical 候选，再跨 bank 归并；为防候选槽位同拍重用造成别名，IQ free list 延迟一拍回收。quick、safe、dual、full 均通过；依赖重载 15010 cycles，dual/full 重载 7272/6647。经验门延迟图的名义最坏组合路径为 1.210ns（`u_pick.pk_v_q[0] → u_pick.pk_tgt_q[3][0]`，42 级，2 MUX + 15 AND + 25 OR），其中 uncertainty 仍按 0.045ns；目标 0.4ns 时数据预算为 0.355ns。E042 同法为 0.9425ns，E045 要抵消新增 cycles 则必须低于 0.8309ns，实际未达到；heavy 的 `cycles×(path+uncertainty)` 代理恶化 43.3%。统一 Yosys 代理为 322388 AND / 206817 NOT（合计较 E042 +8.0%）、全设计深度 74，故停止该方向。 |
 
 ## 分支与提交约定
 
@@ -61,5 +63,7 @@
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - `codex/4fe-rob32-decoupled-iq-v42`：从已恢复的 V28/E029 创建；E042
   将 64 项 Storage ROB 与 32 项 IQ 解耦，不改写 `timing/4fe-rob32-v28`。
+- `codex/e045-e042-banked-picker`：从 E042 创建；仅保存 banked picker
+  负向实验，不合入 E042，后续优化继续从 E042 派生。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
