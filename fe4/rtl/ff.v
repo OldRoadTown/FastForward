@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v57
-// Experiment   : E057-R64-IQ32-safe-strict-oldest
+// RTL revision : 4FE-safe-v58
+// Experiment   : E058-R64-IQ32-registered-bkpr-distance
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : prune critical-jump selector from the safe profile
+// Changes      : maintain registered occupancy/window distances for BKPR
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;

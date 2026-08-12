@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v56
-// Experiment   : E056-R64-IQ32-live-bounded-advance
+// RTL revision : 4FE-safe-v58
+// Experiment   : E058-R64-IQ32-registered-bkpr-distance
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : live vector clamps bounded oldest-issue advance per slot
+// Changes      : BKPR consumes registered occupancy/window distances
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -136,6 +136,8 @@ module ff_rob #(
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
   reg [D-1:0]  old_u_oh_q;              // physical one-hot form of old_u_q
   reg [SW-1:0] adv_q;                   // next bounded catch-up, precomputed
+  reg [SW-1:0] occ_q;                   // alloc_seq_q - out_seq_q
+  reg [SW-1:0] win_q;                   // alloc_seq_q - old_u_q
 
   // -------------------------------------------------------------------------
   // result decode + wake-up
@@ -237,10 +239,13 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   // BKPR (registered output)
   // -------------------------------------------------------------------------
-  wire [SW-1:0] alloc_nxt = alloc_seq_q
-                            + {{(SW-3){1'b0}}, acnt};
-  wire [SW-1:0] occ       = alloc_nxt - out_seq_q;
-  wire [SW-1:0] win       = alloc_nxt - old_u_q;
+  // Keep the current distances as state.  The BKPR decision still includes
+  // this cycle's accepted input count, exactly matching the former
+  // (alloc_seq_q + acnt) - head calculation, but removes the second adder
+  // level from the registered output path.  Preserve occ/win names because
+  // the regression testbench samples them for cause statistics.
+  wire [SW-1:0] occ = occ_q + {{(SW-3){1'b0}}, acnt};
+  wire [SW-1:0] win = win_q + {{(SW-3){1'b0}}, acnt};
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
     else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH) || iq_over;
@@ -294,6 +299,8 @@ module ff_rob #(
       old_u_q     <= {SW{1'b0}};
       old_u_oh_q  <= {{(D-1){1'b0}}, 1'b1};
       adv_q       <= {SW{1'b0}};
+      occ_q       <= {SW{1'b0}};
+      win_q       <= {SW{1'b0}};
     end else begin
       for (e = 0; e < D; e = e + 1) begin
         if (alloc_oh[e]) begin
@@ -320,6 +327,9 @@ module ff_rob #(
       old_u_q     <= old_u_n;
       old_u_oh_q  <= old_u_oh_n;
       adv_q       <= adv_n;
+      occ_q       <= occ_q + {{(SW-3){1'b0}}, acnt}
+                              - {{(SW-3){1'b0}}, pop_cnt};
+      win_q       <= win_q + {{(SW-3){1'b0}}, acnt} - adv_q;
     end
   end
 
