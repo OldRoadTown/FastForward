@@ -1,7 +1,7 @@
 // =============================================================================
 // ff_iq_pick - balanced-tree picker for the decoupled issue queue
 //
-// Experiment : E053
+// Experiment : E057
 // Base       : 4FE-safe-v28 / E029-R32
 //
 // The timing-sensitive search is bounded by QD=32 even though storage ROB is
@@ -136,7 +136,7 @@ module ff_iq_pick #(
       end
       assign n5 = n4[0*RW +: RW] | n4[1*RW +: RW];
       assign c5 = c4[0*RW +: RW] | c4[1*RW +: RW];
-      wire use_crit = c5[RW-1]
+      wire use_crit = (DUAL_STEAL != 0) && c5[RW-1]
                       && (n5[ROB_L +: RAW] != rbase);
       assign pri_oh[gf] = use_crit ? critical_oldest : normal_oldest;
       assign pri_rec[gf] = use_crit ? c5 : n5;
