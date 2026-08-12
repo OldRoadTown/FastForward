@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v52
-// Experiment   : E052-R64-IQ32-retire-live-vector
+// RTL revision : 4FE-safe-v56
+// Experiment   : E056-R64-IQ32-live-bounded-advance
 // Based on     : 4FE-safe-v28 / E029-R32
-// Changes      : explicit live vector removes alloc_seq from retirement path
+// Changes      : live vector clamps bounded oldest-issue advance per slot
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -186,7 +186,6 @@ module ff_rob #(
   // indexed reads and a small priority encoder.
   // -------------------------------------------------------------------------
   reg [SW-1:0] adv_n;
-  reg [SW-1:0] adv_raw, dist_f;
   // Consume only committed issue state here. Including the incoming picked
   // bitmap saves at most one old_u catch-up cycle, but couples the registered
   // picker-coordinate decode back through the eight-entry window and priority
@@ -214,7 +213,7 @@ module ff_rob #(
   // the same cycle computes adv_n for the following edge. Newly committed
   // issue bits may conservatively insert a zero-advance bubble, but can never
   // make the pointer skip an unissued entry.
-  wire [D-1:0] iss_eff = iss_q;
+  wire [D-1:0] iss_eff = iss_q & live_q;
   wire [7:0] issued_win;
   genvar gw;
   generate
@@ -230,11 +229,9 @@ module ff_rob #(
   endgenerate
   wire [3:0] first_gap = pe8(~issued_win);
   always @* begin
-    adv_raw = first_gap[3]
-              ? {{(SW-3){1'b0}}, first_gap[2:0]}
-              : {{(SW-4){1'b0}}, 4'd8};
-    dist_f = alloc_seq_q - old_u_n;
-    adv_n  = (adv_raw > dist_f) ? dist_f : adv_raw;
+    adv_n = first_gap[3]
+            ? {{(SW-3){1'b0}}, first_gap[2:0]}
+            : {{(SW-4){1'b0}}, 4'd8};
   end
 
   // -------------------------------------------------------------------------
