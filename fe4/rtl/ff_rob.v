@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v64
+// Experiment   : E064-R32-safe-metadata-elision
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries and scale safe BKPR limits
+// Changes      : derive dependency state from registered pick metadata
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -29,7 +29,6 @@ module ff_rob #(
   input  wire [4*AW-1:0]     slot_tgt_f,
   input  wire [3:0]          slot_rdy,
   input  wire [3:0]          slot_wtg,
-  input  wire [3:0]          slot_isdep,
   input  wire [3:0]          kw_vld,        // newly waiting dependents
   input  wire [4*AW-1:0]     k_tgt_f,       // their targets (critical mark)
   // FE tracking / results
@@ -55,7 +54,6 @@ module ff_rob #(
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
   output wire [D*AW-1:0]     rob_tgt_f,
-  output wire [D-1:0]        rob_isdep_o,
   output wire [SW-1:0]       alloc_seq_o,
   output wire [SW-1:0]       out_seq_o,
   output wire [SW-1:0]       old_u_o,
@@ -182,7 +180,6 @@ module ff_rob #(
   reg [127:0]  rob_data  [0:D-1];       // input data, later the fwded result
   reg [1:0]    rob_lat   [0:D-1];
   reg [AW-1:0] rob_tgt   [0:D-1];
-  reg          rob_isdep [0:D-1];
 
   reg [D-1:0]  crit_q;                  // some dependent is waiting on this
   reg [D-1:0]  rdy_q;                   // ready, not yet picked
@@ -331,7 +328,6 @@ module ff_rob #(
         rob_data[e]  <= slot_dat[e[1:0]];
         rob_lat[e]   <= slot_lat[e[1:0]];
         rob_tgt[e]   <= slot_tgt[e[1:0]];
-        rob_isdep[e] <= slot_isdep[e[1:0]];
       end else if (res_now_r[e]) begin
         rob_data[e] <= fe_od[rob_src[e]];  // unique result source per entry
       end
@@ -346,7 +342,6 @@ module ff_rob #(
       assign rob_data_f[gi*128 +: 128] = rob_data[gi];
       assign rob_lat_f[gi*2 +: 2]      = rob_lat[gi];
       assign rob_tgt_f[gi*AW +: AW]    = rob_tgt[gi];
-      assign rob_isdep_o[gi]           = rob_isdep[gi];
     end
   endgenerate
 

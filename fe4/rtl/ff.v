@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v64
+// Experiment   : E064-R32-safe-metadata-elision
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
+// Changes      : remove redundant safe-profile source/dependency state
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -104,13 +104,13 @@ module ff #(
   wire [511:0]        slot_dat_f;
   wire [7:0]          slot_lat_f;
   wire [4*AW-1:0]     slot_tgt_f;
-  wire [3:0]          slot_rdy, slot_wtg, slot_isdep;
+  wire [3:0]          slot_rdy, slot_wtg;
   wire [D-1:0]        alloc_oh;
   wire [3:0]          kw_vld;
   wire [4*AW-1:0]     k_tgt_f;
 
   wire [D-1:0]        res_now, res_pred, res_known, wake_now;
-  wire [D-1:0]        rdy_q, crit_q, resv_q, outp_q, rob_isdep;
+  wire [D-1:0]        rdy_q, crit_q, resv_q, outp_q;
   wire [D*128-1:0]    rob_data_f;
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
@@ -150,7 +150,7 @@ module ff #(
     .alloc_seq(alloc_seq), .res_known(res_known),
     .acnt_o(acnt),
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
-    .slot_rdy_o(slot_rdy), .slot_wtg_o(slot_wtg), .slot_isdep_o(slot_isdep),
+    .slot_rdy_o(slot_rdy), .slot_wtg_o(slot_wtg),
     .alloc_oh_o(alloc_oh),
     .kw_vld_o(kw_vld), .k_tgt_f(k_tgt_f)
   );
@@ -159,7 +159,7 @@ module ff #(
     .clk(clk), .rst_n(rst_n),
     .acnt(acnt), .alloc_oh(alloc_oh),
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
-    .slot_rdy(slot_rdy), .slot_wtg(slot_wtg), .slot_isdep(slot_isdep),
+    .slot_rdy(slot_rdy), .slot_wtg(slot_wtg),
     .kw_vld(kw_vld), .k_tgt_f(k_tgt_f),
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
@@ -170,7 +170,6 @@ module ff #(
     .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
     .resv_o(resv_q), .outp_o(outp_q),
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
-    .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
     .bkpr_r(pkt_in_bkpr)
   );
@@ -195,7 +194,6 @@ module ff #(
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),
-    .rob_isdep(rob_isdep),
     .res_now(res_now), .fe_od_f(fe_od_f),
     .fwd_v(fwd_v), .fwd_d_f(fwd_d_f), .fwd_l_f(fwd_l_f),
     .fwd_dpv(fwd_dpv), .fwd_dpd_f(fwd_dpd_f),

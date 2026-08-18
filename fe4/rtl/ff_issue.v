@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v64
+// Experiment   : E064-R32-safe-metadata-elision
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce packet/dependency reads from 64 entries to 32 entries
+// Changes      : derive is-dependency from registered target/index metadata
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -34,7 +34,6 @@ module ff_issue #(
   // ROB read view
   input  wire [D*128-1:0]        rob_data_f,
   input  wire [D*2-1:0]          rob_src_f,     // FE each entry was issued to
-  input  wire [D-1:0]            rob_isdep,
   // same-cycle result bypass
   input  wire [D-1:0]            res_now,
   input  wire [NFE*128-1:0]      fe_od_f,
@@ -107,7 +106,11 @@ module ff_issue #(
       wire [AW-1:0] tgt  = pk_tgt[gf];
       assign fein_v[gf]   = pk_v_q[gf];
       assign fein_d[gf]   = packet_data;
-      assign fein_dpv[gf] = rob_isdep[ridx];
+      // A non-dependent packet stores its own physical ROB index as target;
+      // dependency distances are 1..7, below D, so no dependent can alias it.
+      // Both operands are already registered at I0, replacing a 32:1 state
+      // read with a five-bit equality check and deleting one ROB bit/entry.
+      assign fein_dpv[gf] = (tgt != ridx);
       if (WAKE_BYPASS == 0) begin : g_stored_dp
         // Without same-cycle wake-to-pick bypass, the target result is written
         // to rob_data one edge before this packet reaches issue.  Reading the

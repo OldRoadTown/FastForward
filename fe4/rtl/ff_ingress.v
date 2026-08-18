@@ -2,10 +2,10 @@
 // ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
 //              attribute/dependency resolve, slot rotation, allocation one-hot
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v64
+// Experiment   : E064-R32-safe-metadata-elision
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : use 5-bit physical indexes and 6-bit sequence numbers for R32
+// Changes      : stop exporting redundant per-entry dependency state
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -31,7 +31,6 @@ module ff_ingress #(
   output wire [4*AW-1:0] slot_tgt_f,
   output wire [3:0]      slot_rdy_o,
   output wire [3:0]      slot_wtg_o,
-  output wire [3:0]      slot_isdep_o,
   output wire [D-1:0]    alloc_oh_o,
   // critical marking (a new dependent makes its target critical)
   output wire [3:0]      kw_vld_o,      // k valid && dependent
@@ -220,7 +219,6 @@ module ff_ingress #(
   reg [AW-1:0]  slot_tgt [0:3];
   reg [3:0]     slot_rdy;
   reg [3:0]     slot_wtg;
-  reg [3:0]     slot_isdep;
 
   integer j;
   reg [1:0] kj;
@@ -232,7 +230,6 @@ module ff_ingress #(
       slot_tgt[j]   = k_tgt[kj];
       slot_rdy[j]   = slot_rdy_direct[j];
       slot_wtg[j]   = slot_wtg_direct[j];
-      slot_isdep[j] = k_isdep[kj];
     end
   end
 
@@ -269,7 +266,6 @@ module ff_ingress #(
   assign acnt_o       = acnt;
   assign slot_rdy_o   = slot_rdy;
   assign slot_wtg_o   = slot_wtg;
-  assign slot_isdep_o = slot_isdep;
   assign alloc_oh_o   = alloc_oh;
 
 endmodule

@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v64
+// Experiment   : E064-R32-safe-metadata-elision
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// Changes      : reuse ROB latency as FE source when stealing is disabled
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -610,13 +610,6 @@ module ff_pick #(
     end
   end
 
-  // record which FE each entry was issued to (result routing)
-  reg [1:0] rob_src [0:D-1];
-  always @(posedge clk) begin
-    for (f = 0; f < NFE; f = f + 1)
-      if (pk_v_int[f]) rob_src[pk_idx_q[f]] <= f[1:0];
-  end
-
   // -------------------------------------------------------------------------
   // exports
   // -------------------------------------------------------------------------
@@ -630,8 +623,26 @@ module ff_pick #(
       assign pk_bank_oh_f[gf*8 +: 8]  = pk_bank_oh_q[gf];
       assign pk_local_oh_f[gf*8 +: 8] = pk_local_oh_q[gf];
     end
-    for (gi = 0; gi < D; gi = gi + 1) begin : g_es
-      assign rob_src_f[gi*2 +: 2] = rob_src[gi];
+  endgenerate
+
+  // In the safe profile each latency class always issues to its matching FE,
+  // so an entry's result source is exactly its already-stored rob_lat field.
+  // Retain the explicit source table only for dual/full stealing profiles.
+  generate
+    if (DUAL_STEAL == 0) begin : g_safe_rob_src
+      for (gi = 0; gi < D; gi = gi + 1) begin : g_src
+        assign rob_src_f[gi*2 +: 2] = rob_lat_f[gi*2 +: 2];
+      end
+    end else begin : g_steal_rob_src
+      reg [1:0] rob_src [0:D-1];
+      integer sf;
+      always @(posedge clk) begin
+        for (sf = 0; sf < NFE; sf = sf + 1)
+          if (pk_v_int[sf]) rob_src[pk_idx_q[sf]] <= sf[1:0];
+      end
+      for (gi = 0; gi < D; gi = gi + 1) begin : g_src
+        assign rob_src_f[gi*2 +: 2] = rob_src[gi];
+      end
     end
   endgenerate
 
