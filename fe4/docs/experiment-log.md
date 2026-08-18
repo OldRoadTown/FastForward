@@ -30,6 +30,7 @@
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob32-ap-safe | 0 | 0 | 0 | v28 周期/逻辑时序不变约束下精简冗余 ROB 元数据 |
+| rob32-reuse17-safe | 0 | 0 | 0 | E064 上按依赖距离与 BKPR 在途上界证明回收 reuse window |
 
 ## 结果
 
@@ -44,6 +45,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E064 | `3cd2531e22e8561b67d3ed9e326d97424c89a983` | rob32-ap-safe | 10337 | 11719 | 24910 | — | 0.8875* | — | 148331* | proxy↓* | — | — | 从原始 v28 树 `626413e` 独立派生；删除 32-bit `rob_isdep`，safe 配置复用已有 `rob_lat` 代替 64-bit `rob_src`，dual/full 保留原表。当前工具环境重建 v28 后，quick、heavy/mid/sparse、dual/full 周期逐项完全相同；normal 9 seeds、DEPHEAVY 3 seeds 全通过。星号项均为同脚本逻辑代理，不是内网 PPA 签核。 |
+| E065 | `2fef005e18209f68a7503cf091b9f2391a6dee78` | rob32-reuse17-safe | 9567 | 10961 | 24907 | — | 0.8875* | — | 148321* | flat* | — | — | 将 `WIN_TH` 从13提高到17：最新 allocation 相对 first-unissued 最多为 D-8，覆盖最大依赖距离7；再为两拍 BKPR 保留8个在途包，因此阈值为 D-7-8。新增仿真期逐拍 `reuse_span` 安全断言。heavy/mid 分别较 E064 -7.45%/-6.47%，dual/full 为9512/8432；normal 9 seeds、DEPHEAVY 3 seeds及60k依赖长跑通过。 |
 
 E064 的同流 Yosys/ABC 对比：总 cells `148944 → 148331`（-613，
 -0.412%），时钟状态位代理 `5893 → 5797`（-96，-1.629%），主要组合
@@ -55,6 +57,16 @@ v28 基线完全相同；nominal 下超过 0.355 ns 的 endpoint `1503 → 1477`
 最终面积、功耗和时序必须以内网同约束报告签核。E029 稀疏历史值 24969 与
 当前 Verilator 环境重建值 24910 不同，因此 E064 的“周期不变”结论使用同一
 当前工具版本重建 v28 后的逐项 A/B，而不跨工具版本直接比较历史数值。
+
+E065 不增加状态、流水级或 picker 逻辑。相同 Yosys/ABC 流程下总 cells
+`148331 → 148321`，时钟状态位保持5797，主要组合门代理
+`142524 → 142514`；low/nom/high 最长组合路径保持
+`0.8100/0.8875/0.9650 ns`。ABC 的 nominal `>0.4 ns` endpoint 数由
+1198变为1463，虽然 worst arrival 不变，仍需以内网 STA 同时确认 WNS/TNS，
+不能仅凭本地最长路径代理宣称物理时序完全等价。普通 heavy 9-seed 平均
+cycles 下降7.48%，DEPHEAVY 3-seed 平均下降5.54%；在时钟周期不变且面积、
+功耗近似不变的前提下，seed7 的 T 代理下降7.45%，仅 T 四次方评分项约
+提升1.36倍。
 
 ## 分支与提交约定
 
@@ -72,5 +84,7 @@ v28 基线完全相同；nominal 下超过 0.355 ns 的 endpoint `1503 → 1477`
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - `codex/v28-area-power-opt`：从原始 v28 创建的 E064 独立实验；只接受
   周期逐项不变且 low/nom/high 逻辑延时代理不恶化的面积/功耗候选。
+- `codex/e065-e064-precise-reuse-credit`：从 E064 创建；以最大依赖距离和
+  BKPR 在途上界重新证明 ROB reuse window，并用仿真期断言覆盖实际分配边界。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
