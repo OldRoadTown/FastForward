@@ -29,6 +29,7 @@
 | safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
+| rob32-ap-safe | 0 | 0 | 0 | v28 周期/逻辑时序不变约束下精简冗余 ROB 元数据 |
 
 ## 结果
 
@@ -42,6 +43,18 @@
 | E005 | `f90af222172df52a535443d6aed359193d0b081e` | safe-v4 | 6154 | 9932 | 24963 | 0.2803 | 0.6347 | -0.3544 | — | — | — | — | worst `pick/picked_q[48] → rob/old_u_q[5]`，27 级逻辑；另有 `picked_q[31] → picked_n[27]` 与 `rob/old_u_q[0] → pick/picked_n[27]` 均约 -0.3529 ns；违例 10276 条；通用 Yosys 全设计 266102 cells、picker 深度 60 |
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
+| E064 | `3cd2531e22e8561b67d3ed9e326d97424c89a983` | rob32-ap-safe | 10337 | 11719 | 24910 | — | 0.8875* | — | 148331* | proxy↓* | — | — | 从原始 v28 树 `626413e` 独立派生；删除 32-bit `rob_isdep`，safe 配置复用已有 `rob_lat` 代替 64-bit `rob_src`，dual/full 保留原表。当前工具环境重建 v28 后，quick、heavy/mid/sparse、dual/full 周期逐项完全相同；normal 9 seeds、DEPHEAVY 3 seeds 全通过。星号项均为同脚本逻辑代理，不是内网 PPA 签核。 |
+
+E064 的同流 Yosys/ABC 对比：总 cells `148944 → 148331`（-613，
+-0.412%），时钟状态位代理 `5893 → 5797`（-96，-1.629%），主要组合
+门代理 `143041 → 142524`（-517，-0.361%）。按项目经验门延时模型计算的
+low/nom/high 最长组合路径均为 `0.8100/0.8875/0.9650 ns`，与重建的
+v28 基线完全相同；nominal 下超过 0.355 ns 的 endpoint `1503 → 1477`，
+超过 0.4 ns 的 endpoint 保持 1198。由于本地没有目标 liberty、布局布线
+寄生和 SAIF/VCD 活动，Power 仅由时钟状态位与组合单元/切换电容趋势代理，
+最终面积、功耗和时序必须以内网同约束报告签核。E029 稀疏历史值 24969 与
+当前 Verilator 环境重建值 24910 不同，因此 E064 的“周期不变”结论使用同一
+当前工具版本重建 v28 后的逐项 A/B，而不跨工具版本直接比较历史数值。
 
 ## 分支与提交约定
 
@@ -57,5 +70,7 @@
   单主候选选择网络，并将 ROB oldest-unissued 搜索改为 8×8 分层结构。
 - `timing/4fe-rob32-v28`：从 E021 创建的 E029 独立实验；ROB 32 项、
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
+- `codex/v28-area-power-opt`：从原始 v28 创建的 E064 独立实验；只接受
+  周期逐项不变且 low/nom/high 逻辑延时代理不恶化的面积/功耗候选。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
