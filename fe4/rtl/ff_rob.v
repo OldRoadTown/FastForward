@@ -2,12 +2,12 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v66
-// Experiment   : E066-R32-proven-reuse-window
+// RTL revision : 4FE-safe-v67
+// Experiment   : E067-R32-retire-bitmap-cleanup
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reclaim four entries of conservative reuse-window credit
+// Changes      : remove redundant retired-entry bitmap and one-hot feedback
 //
-// Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
+// Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
 // per packet) and is RETAINED after output until the entry is re-allocated,
 // so late dependents (window = 7) can still read it; the BKPR issue window
@@ -41,7 +41,6 @@ module ff_rob #(
   // pick / egress feedback
   input  wire [D-1:0]        picked,
   input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
-  input  wire [D-1:0]        pop_oh,
   input  wire [2:0]          pop_cnt,
   // state exports
   output wire [D-1:0]        res_now_o,
@@ -51,7 +50,6 @@ module ff_rob #(
   output wire [D-1:0]        rdy_o,
   output wire [D-1:0]        crit_o,
   output wire [D-1:0]        resv_o,
-  output wire [D-1:0]        outp_o,
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
   output wire [D*AW-1:0]     rob_tgt_f,
@@ -192,7 +190,6 @@ module ff_rob #(
   reg [D-1:0]  wtg_q;                   // waiting for dependency result
   reg [D-1:0]  iss_q;                   // picked/issued
   reg [D-1:0]  resv_q;                  // result present (retained after pop)
-  reg [D-1:0]  outp_q;                  // popped to PKTOUT
 
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
@@ -283,10 +280,8 @@ module ff_rob #(
   end
 `endif
 
-  // E005 updates these control vectors every cycle through their D inputs.
-  // This preserves the original precedence (critical set beats alloc clear;
-  // alloc clear beats pop set) without placing k_tgt/pop_oh on per-bit clock
-  // gate enables.
+  // E005 updates the critical vector every cycle through its D input so the
+  // target-marking cone cannot become a per-bit clock-gate enable path.
   reg [D-1:0] crit_set_oh;
   integer ck;
   always @* begin
@@ -295,17 +290,23 @@ module ff_rob #(
       if (kw_vld[ck]) crit_set_oh[k_tgt[ck]] = 1'b1;
   end
   wire [D-1:0] crit_n = (crit_q & ~alloc_oh) | crit_set_oh;
-  wire [D-1:0] outp_n = (outp_q | pop_oh) & ~alloc_oh;
 
   always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      crit_q <= {D{1'b0}};
-      outp_q <= {D{1'b0}};
-    end else begin
-      crit_q <= crit_n;
-      outp_q <= outp_n;
-    end
+    if (!rst_n) crit_q <= {D{1'b0}};
+    else        crit_q <= crit_n;
   end
+
+`ifndef SYNTHESIS
+  // out_seq_q is the first not-yet-retired sequence and advances by pop_cnt
+  // on every retirement edge.  It therefore prevents a physical entry from
+  // being retired twice without a separate per-entry popped bitmap.  Catch a
+  // stale retained result being mistaken for a live entry after wraparound.
+  wire [SW-1:0] retire_avail = alloc_seq_q - out_seq_q;
+  always @(posedge clk) begin
+    if (rst_n && ({{(SW-3){1'b0}}, pop_cnt} > retire_avail))
+      $error("[ff_rob] retirement exceeds live occupancy @%0t", $time);
+  end
+`endif
 
   // -------------------------------------------------------------------------
   // state update
@@ -376,7 +377,6 @@ module ff_rob #(
   assign rdy_o       = rdy_q;
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
-  assign outp_o      = outp_q;
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;

@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v67
+// Experiment   : E067-R32-retire-bitmap-cleanup
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the in-order data-read window from 64 to 32 entries
+// Changes      : rely on monotonic out_seq instead of a retired-entry bitmap
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
@@ -18,15 +18,14 @@ module ff_egress #(
 )(
   input  wire                clk,
   input  wire                rst_n,
+  input  wire [SW-1:0]       alloc_seq,
   input  wire [SW-1:0]       out_seq,
   input  wire [D-1:0]        resv_q,
-  input  wire [D-1:0]        outp_q,
   input  wire [D-1:0]        res_now,
   input  wire [D*128-1:0]    rob_data_f,
   input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
   input  wire [NFE*128-1:0]  fe_od_f,
   output reg  [2:0]          pop_cnt,
-  output reg  [D-1:0]        pop_oh,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
   output reg  [511:0]        lane_d_f       // registered PKTOUT data, 4 x 128
 );
@@ -53,10 +52,15 @@ module ff_egress #(
   wire [AW-1:0] oidx1 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd1};
   wire [AW-1:0] oidx2 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd2};
   wire [AW-1:0] oidx3 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd3};
-  wire can0 = cmpl[oidx0] & ~outp_q[oidx0];
-  wire can1 = cmpl[oidx1] & ~outp_q[oidx1];
-  wire can2 = cmpl[oidx2] & ~outp_q[oidx2];
-  wire can3 = cmpl[oidx3] & ~outp_q[oidx3];
+  // out_seq always identifies the first not-yet-retired sequence. Once an
+  // entry retires, the head advances at the same edge, so a separate popped
+  // bitmap and its 3-to-32 feedback decode are redundant.  The live count
+  // qualifies retained result bits after the ROB becomes empty or wraps.
+  wire [SW-1:0] live_cnt = alloc_seq - out_seq;
+  wire can0 = (live_cnt > 0) && cmpl[oidx0];
+  wire can1 = (live_cnt > 1) && cmpl[oidx1];
+  wire can2 = (live_cnt > 2) && cmpl[oidx2];
+  wire can3 = (live_cnt > 3) && cmpl[oidx3];
 
   always @* begin
     pop_cnt = 3'd0;
@@ -70,14 +74,6 @@ module ff_egress #(
         end
       end
     end
-  end
-
-  always @* begin
-    pop_oh = {D{1'b0}};
-    if (pop_cnt > 3'd0) pop_oh[oidx0] = 1'b1;
-    if (pop_cnt > 3'd1) pop_oh[oidx1] = 1'b1;
-    if (pop_cnt > 3'd2) pop_oh[oidx2] = 1'b1;
-    if (pop_cnt > 3'd3) pop_oh[oidx3] = 1'b1;
   end
 
   // lane mapping + same-cycle result data mux
