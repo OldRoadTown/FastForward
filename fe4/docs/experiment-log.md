@@ -31,6 +31,7 @@
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
+| rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
 
 ## 结果
 
@@ -46,6 +47,7 @@
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
+| E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
 
 ### E066 基线与否决记录
 
@@ -74,7 +76,23 @@
   代理 0.8875→0.8675 ns（-2.25%）；nominal 超过 0.400 ns 的端点
   908→876。该结果只证明代理不恶化，不替代 0.045 ns uncertainty 下 STA。
 - E067 不降低 cycles；它为下一步使用本拍 retirement/old-u credit 精确
-  解除 BKPR 提供时序余量。后续候选仍须以 E066 的三 corner 最大值为上限。
+  解除 BKPR 提供时序余量；该后续候选已在 E068 实现。更后续的候选仍须
+  以 E066 的三 corner 最大值为上限。
+
+### E068 动态 credit 记录
+
+- E068 判断等价于对退休使用 `occ-pop_count > 23`，对发射窗口使用
+  `win-guaranteed_advance > 17`；实现采用 thermometer 和五组固定阈值，
+  没有把通用减法器或完整 `old_u_n` 搜索接到 `bkpr_r`。
+- guaranteed advance 只扫描 `old_u_q` 起的前四项，并由
+  `alloc_seq_q-old_u_q` 限定，故不会把回绕后未分配 entry 的陈旧 issued
+  状态作为 credit。仿真逐拍断言 credit 不超过真实 `old_u_n-old_u_q`。
+- 重载 seeds 3/5/7/11/13/17/19/23/29 的 cycles 为
+  9142/9076/9070/9041/9122/9046/8928/9015/9031；DEPHEAVY seeds
+  7/19/41 为 15028/14854/14832。计入 nominal arrival 代理后，heavy
+  `cycles×period` 相对 E066 约改善 7.26%，但不能替代统一用例 T。
+- E068 更高吞吐可能继续提高单位时间翻转率；在新功耗报告返回前不宣称
+  功耗改善，也不使用 cell count 代替活动率功耗。
 
 ## 分支与提交约定
 
@@ -94,5 +112,7 @@
   ROB reuse-window credit，明确禁止混入 E064/E065。
 - `codex/e067-e066-retire-cleanup`：从 E066 创建的独立 E067；删除
   冗余退休位图，为后续动态 BKPR credit 提供时序余量。
+- `codex/e068-e067-dynamic-bkpr-credit`：从 E067 创建的独立 E068；只用
+  本拍实际进度动态释放 credit，固定安全阈值不变。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
