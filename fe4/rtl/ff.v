@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v64
-// Experiment   : E064-R32-safe-metadata-elision
+// RTL revision : 4FE-safe-v65
+// Experiment   : E065-R32-proven-reuse-window
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : remove redundant safe-profile source/dependency state
+// Changes      : reclaim provably safe ROB reuse-window credit
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;

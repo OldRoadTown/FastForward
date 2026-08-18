@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v64
-// Experiment   : E064-R32-safe-metadata-elision
+// RTL revision : 4FE-safe-v65
+// Experiment   : E065-R32-proven-reuse-window
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : derive dependency state from registered pick metadata
+// Changes      : reclaim four entries of conservative reuse-window credit
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -63,10 +63,16 @@ module ff_rob #(
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
   //  * occupancy   : entry reuse (seq n overwrites n-32):  (D-1)-8      = 23
-  //  * issue window: retained-result overwrite hazard; preserve E021's
-  //                  19-entry safety reserve: D-19                    = 13
+  //  * issue window: a packet may depend on any of the preceding 7 entries.
+  //    Before allocating sequence n, every entry through n-D+7 must therefore
+  //    have issued.  With old_u denoting the first unissued sequence, this is
+  //    equivalent to alloc_nxt-old_u <= D-7.  Reserve 8 additional packets
+  //    for the documented two-cycle BKPR response, giving D-7-8 = 17.  The
+  //    previous E021 constant also subtracted an unexplained four-entry lag;
+  //    old_u is conservative while lagging and already includes the registered
+  //    picked bitmap, so that subtraction is not required for overwrite safety.
   localparam [SW-1:0] OCC_TH = 23;
-  localparam [SW-1:0] WIN_TH = 13;
+  localparam [SW-1:0] WIN_TH = 17;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -260,6 +266,20 @@ module ff_rob #(
     if (!rst_n) bkpr_r <= 1'b0;
     else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH);
   end
+
+`ifndef SYNTHESIS
+  // At the allocation edge, entries selected in the previous cycle consume
+  // their ROB operands before any same-edge entry reuse.  old_u_n includes
+  // those registered picks.  The newest allocation is reuse_span_n-1 beyond
+  // old_u_n and must remain no more than D-8 positions beyond it: the
+  // overwritten entry's latest legal dependent is seven sequences younger
+  // and must already have issued.
+  wire [SW-1:0] reuse_span_n = alloc_nxt - old_u_n;
+  always @(posedge clk) begin
+    if (rst_n && (reuse_span_n > (D-7)))
+      $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
+  end
+`endif
 
   // E005 updates these control vectors every cycle through their D inputs.
   // This preserves the original precedence (critical set beats alloc clear;
