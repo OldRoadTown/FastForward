@@ -289,8 +289,10 @@ module tb_top;
       if (first_in >= 0 && rd_seq < NPKT) begin
         stat_cycles++;
         if (bkpr) stat_bkpr++;
-        if (u_ff.u_rob.occ > u_ff.u_rob.OCC_TH) stat_occ++;
-        if (u_ff.u_rob.win > u_ff.u_rob.WIN_TH) stat_win++;
+        // E068 applies same-edge retirement/issue credit, so sample the
+        // actual qualified causes rather than the pre-credit raw distances.
+        if (u_ff.u_rob.occ_over) stat_occ++;
+        if (u_ff.u_rob.win_over) stat_win++;
       end
 
       // ---------------- end / watchdog ----------------
