@@ -30,6 +30,7 @@
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
+| rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 
 ## 结果
 
@@ -44,6 +45,7 @@
 | E006 | `489c76a2175aaafec2545f1c854e57b987c0b067` | safe-v5 | 6154 | 9932 | 24963 | — | — | — | — | — | — | — | 待内网综合；safe 模式删除未使用的 secondary/parity 选择网络，ROB 用 8×8 分层搜索替代 64-bit rotate+flat PE；通用 Yosys 全设计 263576 cells（对 E005 -0.95%），picker 8433→5936 cells、最长拓扑深度 60→39；safe/dual/full cycles 与 E005 完全一致 |
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
+| E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 
 ### E066 基线与否决记录
 
@@ -60,6 +62,19 @@
   9612/9576/9567/9557/9598/9525/9444/9482/9507；DEPHEAVY seeds
   7/19/41 为 15366/15122/15109。中载 seed 11 为 10961，稀疏 seed 11
   为 24907，dual-heavy/full-heavy seed 7 为 9512/8432。
+- 已收到的 E066 PPA 结果显示功耗相对对照增加约 10%；活动文件、corner
+  与完整报告仍须归档。E067 不用 cell count 代替功耗结论，必须重新测量。
+
+### E067 退休边界记录
+
+- `out_seq_q` 始终指向第一项未退休序列并在退休边沿前进，因此无需
+  `outp_q` 防止重复退休；`alloc_seq-out_seq` live count 限定四个候选，
+  防止 ROB 为空或物理索引回绕时把保留结果误判为新结果。
+- E066/E067 使用同一 Yosys/ABC 命令配对重综合。nominal 最大 arrival
+  代理 0.8875→0.8675 ns（-2.25%）；nominal 超过 0.400 ns 的端点
+  908→876。该结果只证明代理不恶化，不替代 0.045 ns uncertainty 下 STA。
+- E067 不降低 cycles；它为下一步使用本拍 retirement/old-u credit 精确
+  解除 BKPR 提供时序余量。后续候选仍须以 E066 的三 corner 最大值为上限。
 
 ## 分支与提交约定
 
@@ -77,5 +92,7 @@
   picker 4×8。不得在统一用例 T 未确认前替换 E021。
 - `codex/e066-v28-reuse-window`：从原始 v28 创建的独立 E066；只回收
   ROB reuse-window credit，明确禁止混入 E064/E065。
+- `codex/e067-e066-retire-cleanup`：从 E066 创建的独立 E067；删除
+  冗余退休位图，为后续动态 BKPR credit 提供时序余量。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
