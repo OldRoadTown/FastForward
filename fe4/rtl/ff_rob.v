@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v66
+// Experiment   : E066-R32-proven-reuse-window
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries and scale safe BKPR limits
+// Changes      : reclaim four entries of conservative reuse-window credit
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv -> outp.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -65,10 +65,13 @@ module ff_rob #(
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
   //  * occupancy   : entry reuse (seq n overwrites n-32):  (D-1)-8      = 23
-  //  * issue window: retained-result overwrite hazard; preserve E021's
-  //                  19-entry safety reserve: D-19                    = 13
+  //  * issue window: a packet may depend on any of the preceding 7 entries.
+  //    Before allocating sequence n, every entry through n-D+7 must therefore
+  //    have issued.  With old_u denoting the first unissued sequence, this is
+  //    equivalent to alloc_nxt-old_u <= D-7.  Reserve 8 additional packets
+  //    for the documented two-cycle BKPR response, giving D-7-8 = 17.
   localparam [SW-1:0] OCC_TH = 23;
-  localparam [SW-1:0] WIN_TH = 13;
+  localparam [SW-1:0] WIN_TH = 17;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -258,11 +261,27 @@ module ff_rob #(
                             + {{(SW-3){1'b0}}, acnt};
   wire [SW-1:0] occ       = alloc_nxt - out_seq_q;
   wire [SW-1:0] win       = alloc_nxt - old_u_q;
+  // WIN_TH is 17: spell out win > 17 so the fixed threshold does not infer a
+  // generic magnitude comparator on the registered BKPR boundary.
+  wire          win_over  = win[5] | (win[4] & (|win[3:1]));
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
-    else        bkpr_r <= (occ > OCC_TH) || (win > WIN_TH);
+    else        bkpr_r <= (occ > OCC_TH) || win_over;
   end
+
+`ifndef SYNTHESIS
+  // At the allocation edge, registered picks consume their ROB operands
+  // before any same-edge entry reuse.  The newest allocation is therefore
+  // reuse_span_n-1 beyond old_u_n and must remain no more than D-8 positions
+  // beyond it; otherwise a legal distance-seven dependent could still need
+  // the entry being overwritten.
+  wire [SW-1:0] reuse_span_n = alloc_nxt - old_u_n;
+  always @(posedge clk) begin
+    if (rst_n && (reuse_span_n > (D-7)))
+      $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
+  end
+`endif
 
   // E005 updates these control vectors every cycle through their D inputs.
   // This preserves the original precedence (critical set beats alloc clear;

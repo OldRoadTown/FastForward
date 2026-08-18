@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
+// RTL revision : 4FE-safe-v66
+// Experiment   : E066-R32-proven-reuse-window
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the unified ROB to 32 entries with four 8-entry banks
+// Changes      : reclaim provably safe ROB reuse-window credit on original v28
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
