@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v67
-// Experiment   : E067-R32-retire-bitmap-cleanup
+// RTL revision : 4FE-safe-v68
+// Experiment   : E068-R32-dynamic-bkpr-credit
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : rely on monotonic out_seq instead of a retired-entry bitmap
+// Changes      : export the natural retirement thermometer as BKPR credit
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
@@ -26,6 +26,7 @@ module ff_egress #(
   input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
   input  wire [NFE*128-1:0]  fe_od_f,
   output reg  [2:0]          pop_cnt,
+  output wire [3:0]          pop_therm,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
   output reg  [511:0]        lane_d_f       // registered PKTOUT data, 4 x 128
 );
@@ -61,6 +62,14 @@ module ff_egress #(
   wire can1 = (live_cnt > 1) && cmpl[oidx1];
   wire can2 = (live_cnt > 2) && cmpl[oidx2];
   wire can3 = (live_cnt > 3) && cmpl[oidx3];
+
+  // Contiguous retirement already forms a thermometer code. Export it so
+  // ROB backpressure can consume same-edge progress without re-encoding the
+  // binary pop count or speculating about a future completion.
+  assign pop_therm[0] = can0;
+  assign pop_therm[1] = pop_therm[0] & can1;
+  assign pop_therm[2] = pop_therm[1] & can2;
+  assign pop_therm[3] = pop_therm[2] & can3;
 
   always @* begin
     pop_cnt = 3'd0;

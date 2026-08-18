@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v67
-// Experiment   : E067-R32-retire-bitmap-cleanup
+// RTL revision : 4FE-safe-v68
+// Experiment   : E068-R32-dynamic-bkpr-credit
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : remove redundant retired-entry bitmap and one-hot feedback
+// Changes      : consume actual retirement/issue progress in the BKPR decision
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -137,6 +137,7 @@ module ff #(
   wire [NFE*2-1:0]    fwd_l_f;
 
   wire [2:0]          pop_cnt;
+  wire [3:0]          pop_therm;
   wire [3:0]          lane_v;
   wire [511:0]        lane_d_f;
 
@@ -164,7 +165,7 @@ module ff #(
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
     .fe_od_f(fe_od_f),
     .picked(picked), .rob_src_f(rob_src_f),
-    .pop_cnt(pop_cnt),
+    .pop_cnt(pop_cnt), .pop_therm(pop_therm),
     .res_now_o(res_now), .res_pred_o(res_pred), .res_known_o(res_known),
     .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
     .resv_o(resv_q),
@@ -261,7 +262,7 @@ module ff #(
     .alloc_seq(alloc_seq), .out_seq(out_seq),
     .resv_q(resv_q), .res_now(res_now),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
-    .pop_cnt(pop_cnt),
+    .pop_cnt(pop_cnt), .pop_therm(pop_therm),
     .lane_v(lane_v), .lane_d_f(lane_d_f)
   );
 
