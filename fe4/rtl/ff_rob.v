@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
+// RTL revision : 4FE-safe-v70a
+// Experiment   : E070A-R32-advance8-credit
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// Changes      : credit up to eight guaranteed old-u advances in BKPR
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -262,7 +262,7 @@ module ff_rob #(
 
   // Credit only progress that is guaranteed to occur at this edge. Retirement
   // is already available as a four-bit thermometer. For the issue window,
-  // inspect at most four consecutive entries at old_u; this is a conservative
+  // inspect at most eight consecutive entries at old_u; this is a conservative
   // lower bound on old_u_n-old_u_q and avoids placing the full peH/old_u_n cone
   // on bkpr_r. dist_f prevents stale iss bits beyond the allocation frontier
   // from being counted after physical-index wraparound.
@@ -270,17 +270,29 @@ module ff_rob #(
   wire [AW-1:0] cred_i1 = old_u_q[AW-1:0] + {{(AW-1){1'b0}}, 1'b1};
   wire [AW-1:0] cred_i2 = old_u_q[AW-1:0] + {{(AW-2){1'b0}}, 2'd2};
   wire [AW-1:0] cred_i3 = old_u_q[AW-1:0] + {{(AW-2){1'b0}}, 2'd3};
+  wire [AW-1:0] cred_i4 = old_u_q[AW-1:0] + {{(AW-3){1'b0}}, 3'd4};
+  wire [AW-1:0] cred_i5 = old_u_q[AW-1:0] + {{(AW-3){1'b0}}, 3'd5};
+  wire [AW-1:0] cred_i6 = old_u_q[AW-1:0] + {{(AW-3){1'b0}}, 3'd6};
+  wire [AW-1:0] cred_i7 = old_u_q[AW-1:0] + {{(AW-3){1'b0}}, 3'd7};
   wire dist_ge1 = |dist_f;
   wire dist_ge2 = |dist_f[SW-1:1];
   wire dist_ge3 = (|dist_f[SW-1:2]) | (&dist_f[1:0]);
   wire dist_ge4 = |dist_f[SW-1:2];
-  wire [3:0] adv_therm;
+  wire dist_ge5 = (|dist_f[SW-1:3]) | (dist_f[2] & (|dist_f[1:0]));
+  wire dist_ge6 = (|dist_f[SW-1:3]) | (dist_f[2] & dist_f[1]);
+  wire dist_ge7 = (|dist_f[SW-1:3]) | (&dist_f[2:0]);
+  wire dist_ge8 = |dist_f[SW-1:3];
+  wire [7:0] adv_therm;
   assign adv_therm[0] = dist_ge1 & iss_eff[cred_i0];
   assign adv_therm[1] = adv_therm[0] & dist_ge2 & iss_eff[cred_i1];
   assign adv_therm[2] = adv_therm[1] & dist_ge3 & iss_eff[cred_i2];
   assign adv_therm[3] = adv_therm[2] & dist_ge4 & iss_eff[cred_i3];
+  assign adv_therm[4] = adv_therm[3] & dist_ge5 & iss_eff[cred_i4];
+  assign adv_therm[5] = adv_therm[4] & dist_ge6 & iss_eff[cred_i5];
+  assign adv_therm[6] = adv_therm[5] & dist_ge7 & iss_eff[cred_i6];
+  assign adv_therm[7] = adv_therm[6] & dist_ge8 & iss_eff[cred_i7];
 
-  // Convert each thermometer to a one-hot count (0..4), then select fixed
+  // Convert each thermometer to a one-hot count, then select fixed
   // threshold comparisons in parallel. The effective raw thresholds rise by
   // actual same-edge progress, while the post-progress safety limits remain
   // OCC_TH=23 and WIN_TH=17.
@@ -289,7 +301,11 @@ module ff_rob #(
                               pop_therm[1] & ~pop_therm[2],
                               pop_therm[0] & ~pop_therm[1],
                              ~pop_therm[0] };
-  wire [4:0] adv_count_oh = { adv_therm[3],
+  wire [8:0] adv_count_oh = { adv_therm[7],
+                              adv_therm[6] & ~adv_therm[7],
+                              adv_therm[5] & ~adv_therm[6],
+                              adv_therm[4] & ~adv_therm[5],
+                              adv_therm[3] & ~adv_therm[4],
                               adv_therm[2] & ~adv_therm[3],
                               adv_therm[1] & ~adv_therm[2],
                               adv_therm[0] & ~adv_therm[1],
@@ -315,11 +331,21 @@ module ff_rob #(
                             & (win[3] | (win[2] & (win[1] | win[0]))));
   wire win_gt21 = win[5] | (win[4]
                             & (win[3] | (win[2] & win[1])));
+  wire win_gt22 = win[5] | (win[4]
+                            & (win[3] | (&win[2:0])));
+  wire win_gt23 = win[5] | (win[4] & win[3]);
+  wire win_gt24 = win[5] | (win[4] & win[3] & (|win[2:0]));
+  wire win_gt25 = win[5] | (win[4] & win[3]
+                            & (win[2] | win[1]));
   wire win_over = (adv_count_oh[0] & win_gt17)
                 | (adv_count_oh[1] & win_gt18)
                 | (adv_count_oh[2] & win_gt19)
                 | (adv_count_oh[3] & win_gt20)
-                | (adv_count_oh[4] & win_gt21);
+                | (adv_count_oh[4] & win_gt21)
+                | (adv_count_oh[5] & win_gt22)
+                | (adv_count_oh[6] & win_gt23)
+                | (adv_count_oh[7] & win_gt24)
+                | (adv_count_oh[8] & win_gt25);
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
@@ -334,10 +360,14 @@ module ff_rob #(
   // the entry being overwritten.
   wire [SW-1:0] reuse_span_n = alloc_nxt - old_u_n;
   wire [SW-1:0] old_u_adv_n  = old_u_n - old_u_q;
-  wire [2:0] adv_credit_n = {2'b0, adv_therm[0]}
-                          + {2'b0, adv_therm[1]}
-                          + {2'b0, adv_therm[2]}
-                          + {2'b0, adv_therm[3]};
+  wire [3:0] adv_credit_n = {3'b0, adv_therm[0]}
+                          + {3'b0, adv_therm[1]}
+                          + {3'b0, adv_therm[2]}
+                          + {3'b0, adv_therm[3]}
+                          + {3'b0, adv_therm[4]}
+                          + {3'b0, adv_therm[5]}
+                          + {3'b0, adv_therm[6]}
+                          + {3'b0, adv_therm[7]};
   wire [2:0] pop_credit_n = {2'b0, pop_therm[0]}
                           + {2'b0, pop_therm[1]}
                           + {2'b0, pop_therm[2]}
@@ -345,7 +375,7 @@ module ff_rob #(
   always @(posedge clk) begin
     if (rst_n && (reuse_span_n > (D-7)))
       $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
-    if (rst_n && ({{(SW-3){1'b0}}, adv_credit_n} > old_u_adv_n))
+    if (rst_n && ({{(SW-4){1'b0}}, adv_credit_n} > old_u_adv_n))
       $error("[ff_rob] issue credit exceeds old-u advance @%0t", $time);
     if (rst_n && (pop_credit_n != pop_cnt))
       $error("[ff_rob] retirement credit/count mismatch @%0t", $time);
