@@ -26,6 +26,7 @@ module ff_issue #(
   input  wire                    rst_n,
   // picks (I0 registered)
   input  wire [NFE-1:0]          pk_v_q,
+  input  wire [NFE-1:0]          replay_q,
   input  wire [NFE*AW-1:0]       pk_idx_f,
   input  wire [NFE*AW-1:0]       pk_tgt_f,
   input  wire [NFE*2-1:0]        pk_lat_f,
@@ -112,8 +113,10 @@ module ff_issue #(
         // Without same-cycle wake-to-pick bypass, the target result is written
         // to rob_data one edge before this packet reaches issue.  Reading the
         // retained copy is therefore exact and removes res_now/rob_src/FEOUT
-        // selection from the safe-profile FE input timing path.
-        assign fein_dpd[gf] = rob_data[tgt];
+        // selection from the normal safe-profile FE input timing path. E071's
+        // single replay is the only exception: its target returns on this same
+        // FE, so no cross-FE source mux is needed.
+        assign fein_dpd[gf] = replay_q[gf] ? fe_od[gf] : rob_data[tgt];
       end else begin : g_live_dp
         // Full-throughput profile: a pre-woken packet may enter the FE in the
         // same cycle as its target result and must consume the live FEOUT bus.

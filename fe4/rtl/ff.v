@@ -35,7 +35,8 @@
 module ff #(
   parameter REG_FEIN    = 0,
   parameter WAKE_BYPASS = 0,
-  parameter DUAL_STEAL  = 0
+  parameter DUAL_STEAL  = 0,
+  parameter HEAD_REPLAY = 1
 )(
   input  wire         clk,
   input  wire         rst_n,
@@ -115,9 +116,14 @@ module ff #(
   wire [D*2-1:0]      rob_lat_f;
   wire [D*AW-1:0]     rob_tgt_f;
   wire [SW-1:0]       alloc_seq, out_seq, old_u;
+  wire                replay_head_v;
+  wire [AW-1:0]       replay_head_idx, replay_head_tgt;
+  wire [1:0]          replay_head_lat;
+  wire [7:0]          replay_head_bank_oh, replay_head_local_oh;
 
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
+  wire [NFE-1:0]      replay_q;
   wire [NFE*AW-1:0]   pk_idx_f;
   wire [NFE*AW-1:0]   pk_tgt_f;
   wire [NFE*2-1:0]    pk_lat_f;
@@ -130,6 +136,8 @@ module ff #(
   wire [NFE*2-1:0]    issue_lat_f;
   wire [NFE-1:0]      exit_v, pre_v;
   wire [NFE*AW-1:0]   exit_idx_f, pre_idx_f;
+  wire [NFE-1:0]      replay_pre_v;
+  wire [NFE*AW-1:0]   replay_pre_idx_f;
   wire [NFE*4-1:0]    sched_v_f;
 
   wire [NFE-1:0]      fwd_v, fwd_dpv;
@@ -172,17 +180,30 @@ module ff #(
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
+    .replay_head_v_o(replay_head_v),
+    .replay_head_idx_o(replay_head_idx),
+    .replay_head_tgt_o(replay_head_tgt),
+    .replay_head_lat_o(replay_head_lat),
+    .replay_head_bank_oh_o(replay_head_bank_oh),
+    .replay_head_local_oh_o(replay_head_local_oh),
     .bkpr_r(pkt_in_bkpr)
   );
 
   ff_pick #(.D(D), .AW(AW), .NFE(NFE),
             .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
-            .DUAL_STEAL(DUAL_STEAL)) u_pick (
+            .DUAL_STEAL(DUAL_STEAL), .HEAD_REPLAY(HEAD_REPLAY)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
-    .picked(picked), .pk_v_q(pk_v_q),
+    .pre_v(replay_pre_v), .pre_idx_f(replay_pre_idx_f),
+    .replay_head_v(replay_head_v),
+    .replay_head_idx(replay_head_idx),
+    .replay_head_tgt(replay_head_tgt),
+    .replay_head_lat(replay_head_lat),
+    .replay_head_bank_oh(replay_head_bank_oh),
+    .replay_head_local_oh(replay_head_local_oh),
+    .picked(picked), .pk_v_q(pk_v_q), .replay_q(replay_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f), .rob_src_f(rob_src_f)
@@ -191,7 +212,8 @@ module ff #(
   ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
              .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
-    .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_v_q(pk_v_q), .replay_q(replay_q),
+    .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),
@@ -207,6 +229,7 @@ module ff #(
     .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_lat_f(issue_lat_f),
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .replay_pre_v(replay_pre_v), .replay_pre_idx_f(replay_pre_idx_f),
     .sched_v_f(sched_v_f)
   );
 

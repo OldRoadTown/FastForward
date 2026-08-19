@@ -58,6 +58,14 @@ module ff_rob #(
   output wire [SW-1:0]       alloc_seq_o,
   output wire [SW-1:0]       out_seq_o,
   output wire [SW-1:0]       old_u_o,
+  // E071: one registered snapshot of the oldest waiting entry.  This keeps
+  // the 32-entry ROB read mux out of the result-prediction/replay cycle.
+  output wire                replay_head_v_o,
+  output wire [AW-1:0]       replay_head_idx_o,
+  output wire [AW-1:0]       replay_head_tgt_o,
+  output wire [1:0]          replay_head_lat_o,
+  output wire [7:0]          replay_head_bank_oh_o,
+  output wire [7:0]          replay_head_local_oh_o,
   output reg                 bkpr_r         // registered BKPR
 );
 
@@ -196,6 +204,13 @@ module ff_rob #(
   reg [SW-1:0] out_seq_q;
   reg [SW-1:0] old_u_q;                 // oldest un-issued sequence number
 
+  reg          replay_head_v_q;
+  reg [AW-1:0] replay_head_idx_q;
+  reg [AW-1:0] replay_head_tgt_q;
+  reg [1:0]    replay_head_lat_q;
+  reg [7:0]    replay_head_bank_oh_q;
+  reg [7:0]    replay_head_local_oh_q;
+
   // -------------------------------------------------------------------------
   // result decode + wake-up
   // -------------------------------------------------------------------------
@@ -251,6 +266,27 @@ module ff_rob #(
   // equivalent to min(adv_raw, dist_f) followed by old_u_q + adv, but removes
   // that mux/compare/add chain from the old_u_q register input.
   wire [SW-1:0] old_u_n = take_first ? first_seq : alloc_seq_q;
+
+  // Snapshot only a stable waiting head.  A waiting entry cannot advance
+  // old_u until it is issued; excluding wake_now prevents the snapshot from
+  // remaining valid after the prediction edge that arms a replay.  Metadata
+  // is captured one cycle before matching pre_idx, so the replay decision is
+  // four 5-bit comparisons rather than a 32-entry target/latency read.
+  wire [AW-1:0] replay_snap_idx = old_u_q[AW-1:0];
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      replay_head_v_q <= 1'b0;
+    else
+      replay_head_v_q <= (dist_f != 0) && wtg_q[replay_snap_idx]
+                         && !wake_now[replay_snap_idx];
+  end
+  always @(posedge clk) begin
+    replay_head_idx_q      <= replay_snap_idx;
+    replay_head_tgt_q      <= rob_tgt[replay_snap_idx];
+    replay_head_lat_q      <= rob_lat[replay_snap_idx];
+    replay_head_bank_oh_q  <= 8'b1 << {1'b0, replay_snap_idx[4:3]};
+    replay_head_local_oh_q <= 8'b1 << replay_snap_idx[2:0];
+  end
 
   // -------------------------------------------------------------------------
   // BKPR (registered output)
@@ -452,5 +488,11 @@ module ff_rob #(
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;
+  assign replay_head_v_o        = replay_head_v_q;
+  assign replay_head_idx_o      = replay_head_idx_q;
+  assign replay_head_tgt_o      = replay_head_tgt_q;
+  assign replay_head_lat_o      = replay_head_lat_q;
+  assign replay_head_bank_oh_o  = replay_head_bank_oh_q;
+  assign replay_head_local_oh_o = replay_head_local_oh_q;
 
 endmodule

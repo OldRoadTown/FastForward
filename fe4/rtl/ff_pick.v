@@ -22,8 +22,9 @@ module ff_pick #(
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0,
-  parameter REG_FEIN    = 0    // steal bookkeeping assumes issue = pick+1:
+  parameter REG_FEIN    = 0,   // steal bookkeeping assumes issue = pick+1:
                                // with REG_FEIN (pick+2) stealing is disabled
+  parameter HEAD_REPLAY = 1
 )(
   input  wire                clk,
   input  wire                rst_n,
@@ -34,8 +35,17 @@ module ff_pick #(
   input  wire [D*AW-1:0]     rob_tgt_f,
   input  wire [AW-1:0]       rbase,        // oldest un-issued index
   input  wire [NFE*4-1:0]    sched_v_f,    // output-slot booking (ff_sched)
+  input  wire [NFE-1:0]      pre_v,
+  input  wire [NFE*AW-1:0]   pre_idx_f,
+  input  wire                replay_head_v,
+  input  wire [AW-1:0]       replay_head_idx,
+  input  wire [AW-1:0]       replay_head_tgt,
+  input  wire [1:0]          replay_head_lat,
+  input  wire [7:0]          replay_head_bank_oh,
+  input  wire [7:0]          replay_head_local_oh,
   output wire [D-1:0]        picked,
   output reg  [NFE-1:0]      pk_v_q,       // registered (I0 -> I1)
+  output wire [NFE-1:0]      replay_q,
   output wire [NFE*AW-1:0]   pk_idx_f,
   output wire [NFE*AW-1:0]   pk_tgt_f,     // target index, I0-retimed for I1
   output wire [NFE*2-1:0]    pk_lat_f,
@@ -297,6 +307,7 @@ module ff_pick #(
   wire [1:0]    rob_lat [0:D-1];
   wire [AW-1:0] rob_tgt [0:D-1];
   wire [3:0] sched_v [0:NFE-1];
+  wire [AW-1:0] pre_idx [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ul
@@ -305,10 +316,26 @@ module ff_pick #(
     end
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_us
       assign sched_v[gi] = sched_v_f[gi*4 +: 4];
+      assign pre_idx[gi] = pre_idx_f[gi*AW +: AW];
+    end
+  endgenerate
+
+  // Preserve the registered hierarchy coordinates from ff_rob.  Rebuilding
+  // a binary 5-to-32 decode here would put replay back on the picked/old_u
+  // path that E005 removed.
+  wire [D-1:0] replay_head_oh;
+  genvar hb, hl;
+  generate
+    for (hb = 0; hb < 4; hb = hb + 1) begin : g_replay_bank
+      for (hl = 0; hl < 8; hl = hl + 1) begin : g_replay_local
+        assign replay_head_oh[hb*8+hl] = replay_head_bank_oh[hb]
+                                            & replay_head_local_oh[hl];
+      end
     end
   endgenerate
 
   reg [NFE-1:0] pk_v_int;
+  reg [NFE-1:0] replay_v_int;
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
   reg [AW-1:0]  pk_tgt_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
@@ -498,6 +525,7 @@ module ff_pick #(
   // pick registers + issue-FE record
   // -------------------------------------------------------------------------
   reg [NFE-1:0] pk_v_n;
+  reg [NFE-1:0] replay_v_n;
   reg [AW-1:0] pk_idx_n [0:NFE-1];
   reg [AW-1:0] pk_tgt_n [0:NFE-1];
   reg [1:0]    pk_lat_n [0:NFE-1];
@@ -519,6 +547,24 @@ module ff_pick #(
         pk_idx_n[f] = st2_didx;
         pk_lat_n[f] = st2_dc;
       end
+    end
+  end
+
+  // E071 same-FE replay.  The result source is also the receiver, so the
+  // dependency data uses that lane's FEOUT directly.  Restrict the feature to
+  // the timing-safe profile; full prewake already handles this case, while
+  // DUAL_STEAL/REG_FEIN use different pick-to-issue bookkeeping.
+  always @* begin
+    for (f = 0; f < NFE; f = f + 1) begin
+      replay_v_n[f] = 1'b0;
+      if ((HEAD_REPLAY != 0) && (WAKE_BYPASS == 0)
+          && (DUAL_STEAL == 0) && (REG_FEIN == 0)
+          && replay_head_v && pre_v[f]
+          && (pre_idx[f] == replay_head_tgt)
+          && !pk_v_n[f]
+          && !stcfl(sched_v[f], pk_v_int[f], pk_lat_q[f],
+                    replay_head_lat))
+        replay_v_n[f] = 1'b1;
     end
   end
 
@@ -577,6 +623,7 @@ module ff_pick #(
         picked_n = {D{1'b0}};
         for (pf = 0; pf < NFE; pf = pf + 1)
           if (pk_v_n[pf]) picked_n = picked_n | sel_oh[pf];
+        if (|replay_v_n) picked_n = picked_n | replay_head_oh;
       end
     end else begin : g_dual_picked
       integer pf;
@@ -584,6 +631,7 @@ module ff_pick #(
         picked_n = {D{1'b0}};
         for (pf = 0; pf < NFE; pf = pf + 1)
           if (pk_v_n[pf]) picked_n[pk_idx_n[pf]] = 1'b1;
+        if (|replay_v_n) picked_n = picked_n | replay_head_oh;
       end
     end
   endgenerate
@@ -591,22 +639,29 @@ module ff_pick #(
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       pk_v_int <= {NFE{1'b0}};
+      replay_v_int <= {NFE{1'b0}};
       picked_q <= {D{1'b0}};
     end else begin
-      pk_v_int <= pk_v_n;
+      pk_v_int <= pk_v_n | replay_v_n;
+      replay_v_int <= replay_v_n;
       picked_q <= picked_n;
     end
   end
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1) begin
-      pk_idx_q[f] <= pk_idx_n[f];
+      pk_idx_q[f] <= replay_v_n[f] ? replay_head_idx
+                                    : pk_idx_n[f];
       // Retiming the dependency target across the existing I0/I1 boundary
       // removes pk_idx_q -> rob_tgt[32:1] from the FE input cycle.  This is
       // unconditional so the picker cone cannot become an ICG-enable path.
-      pk_tgt_q[f] <= pk_tgt_n[f];
-      pk_lat_q[f] <= pk_lat_n[f];
-      pk_bank_oh_q[f] <= pk_bank_oh_n[f];
-      pk_local_oh_q[f] <= pk_local_oh_n[f];
+      pk_tgt_q[f] <= replay_v_n[f] ? replay_head_tgt
+                                    : pk_tgt_n[f];
+      pk_lat_q[f] <= replay_v_n[f] ? replay_head_lat
+                                    : pk_lat_n[f];
+      pk_bank_oh_q[f] <= replay_v_n[f] ? replay_head_bank_oh
+                                        : pk_bank_oh_n[f];
+      pk_local_oh_q[f] <= replay_v_n[f] ? replay_head_local_oh
+                                         : pk_local_oh_n[f];
     end
   end
 
@@ -621,6 +676,7 @@ module ff_pick #(
   // exports
   // -------------------------------------------------------------------------
   always @* pk_v_q = pk_v_int;
+  assign replay_q = replay_v_int;
 
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_ex

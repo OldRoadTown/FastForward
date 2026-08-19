@@ -21,6 +21,10 @@ module ff_sched #(
   output wire [NFE*AW-1:0]   exit_idx_f,
   output wire [NFE-1:0]      pre_v,
   output wire [NFE*AW-1:0]   pre_idx_f,
+  // Registered slot-2 view for E071.  Unlike pre_idx, this excludes the
+  // same-cycle latency-0 issue bypass and therefore has no pk_idx_q path.
+  output wire [NFE-1:0]      replay_pre_v,
+  output wire [NFE*AW-1:0]   replay_pre_idx_f,
   output wire [NFE*4-1:0]    sched_v_f      // bit f*4+(s-1) = sched_v[f][s]
 );
 
@@ -70,6 +74,8 @@ module ff_sched #(
                                      | (issue_v[gf] & (issue_lat[gf] == 2'd0));
       assign pre_idx_f[gf*AW +: AW]  = sched_v[gf][2] ? sched_idx[gf][2]
                                                       : issue_idx[gf];
+      assign replay_pre_v[gf] = sched_v[gf][2];
+      assign replay_pre_idx_f[gf*AW +: AW] = sched_idx[gf][2];
       assign sched_v_f[gf*4 +: 4]    = sched_v[gf];
     end
   endgenerate
