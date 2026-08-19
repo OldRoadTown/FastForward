@@ -110,6 +110,33 @@
   上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
   `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
+### E069 否决与 E070-P 气泡画像
+
+- E069 的 32-entry registered prewake 在本地门延迟代理中最大 arrival
+  没有超过 E068，但真实 STA 已确认明显恶化，因此判定失败且不得作为
+  后续 base。原因是 issue/far tag 对 32 项 waiting state 的全局比较造成
+  高扇出、布线拥塞和大量新增近临界端点；E070 重新从 E068 派生。
+- E070-P 提交 `9055306` 只在 testbench 增加层级探针，不修改任何综合
+  RTL、DUT 端口或配置，所有 cycles 与 E068 完全一致。画像统计 issue/
+  retirement 宽度、picker 空闲归因、BKPR credit、`old_u` 状态和真实
+  可偷取机会。
+- heavy seeds 3/7/19 中，`old_u` 一拍推进超过四项平均占 17.10% 周期，
+  且 10.16% 的总周期同时处于 BKPR；DEPHEAVY seeds 7/19/41 对应
+  9.07%/7.10%，mid seed11 对应 13.48%/2.18%。E068 当前只承认最多
+  四项 advance credit，存在可测的保守解除空间。
+- 扣除 donor 自身主发射并检查 receiver scheduler 冲突后，至少存在一个
+  可偷取机会的周期占 heavy 51.70%、DEPHEAVY 25.41%、mid 41.44%。这是
+  理论机会而非可直接相加的 cycles 收益；已有 dual-steal 实测收益仅约
+  0.6%，说明实现方式和时序代价比机会计数更关键。
+- `old_u` 处于 waiting 时，其 target 在上述全部画像中 100% 已经 issued；
+  retirement 的首个阻塞项也没有落在 waiting 状态。因此否决单纯的
+  head-of-line producer priority：生产者优先级已经无法缩短这些等待，
+  主要瓶颈是已发射结果延迟、class 利用率和保守 BKPR。
+- 下一步先隔离评估 8-entry exact advance credit：保持 23/17 安全阈值，
+  仅扩展 BKPR 对连续 `iss_eff` 的精确 credit，不连接 picker、wake、FE
+  数据或 `exit_idx → out_seq` 路径。若真实 STA 不劣于 E068 且 cycles
+  有稳定收益，再考虑比现有 dual-steal 更简单的单路寄存式偷取。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -134,5 +161,7 @@
   用于真实 STA/功耗不通过时的低逻辑量回退评估。
 - `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
   完整 E068，仅作为归因与复现实验保留。
+- `codex/e070-e068-stall-profile`：从 E068 创建的非综合画像分支；只增加
+  testbench 统计，用于否决 HOL priority 并选择后续优化方向。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
