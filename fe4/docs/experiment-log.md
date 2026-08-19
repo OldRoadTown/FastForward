@@ -33,6 +33,7 @@
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
 | rob32+4-completion-spill | 0 | 0 | 0 | E072A；32 项 issue storage + 4 项已发射 completion spill |
+| rob32+4-spill-stored-tseq | 0 | 0 | 0 | E073；E072A 容量不变，ROB 直接存储完整 target sequence tag |
 
 ## 结果
 
@@ -50,6 +51,7 @@
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
 | E072A | `43a8326c4f95ca2b82f696a17461432ba5383ff1` | rob32+4-completion-spill | 8665 | 10390 | 24908 | — | — | — | 177731† | — | — | — | 从 E068 独立派生；保留 32 项 issue/picker，只用四项 completion spill 承接被覆盖但尚未返回/退休的已发射项，将安全阈值 23/17 提到 27/21。九个重载 seed 平均仅改善 4.53%，低于 5% 保留门槛；cells +20.03%，故不替代 E068。配对 ABC simple 的 low/nom/high 最大 arrival 与 E068 同为 0.7950/0.8675/0.9400 ns，但真实 STA/PPA 待测。 |
+| E073 | `b78182f6fa124f89efda1ab5c3b06bc9b0aaab36` | rob32+4-spill-stored-tseq | 8665 | 10390 | 24908 | — | — | — | 178902† | — | — | — | 从 E072A 独立派生的时序修复候选；将 ROB 的 5-bit target index 扩为完整 6-bit sequence tag，在 allocation 时确定 epoch，wake 与 picker 不再重建 target epoch。全部 cycles 与 E072A 一致。配对代理全局 low/nom/high 最大 arrival 仍为 0.7950/0.8675/0.9400 ns；约束 `rdy_q → pk_tseq_q` 的 nominal 代理从 0.8400 降至 0.6600 ns（-180 ps），nominal >0.4 ns 端点 1860→1762，cells +0.66%。用户侧 E072A 真实 STA 最差路径正是 `u_rob/rdy_q → u_pick/pk_tseq_q`，因此 E073 必须重新跑真实 STA 后才能保留。 |
 
 ### E066 基线与否决记录
 
@@ -142,6 +144,33 @@
 - 开发中验证并撤销了两条路径：恢复同拍 retirement bypass 会把 nominal
   最大代理拉到 1.3075 ns；关闭 latency-zero 预唤醒则使 heavy seed7 回到
   9038 cycles。提交版本两者均不采用。
+
+### E073 stored target sequence 时序修复记录
+
+- 用户侧真实 STA 显示 E072A 违例严重，最差路径为
+  `u_rob/rdy_q → u_pick/pk_tseq_q`。原 RTL 在 picker 选出 physical index 后，
+  先以 `pk_idx < rbase` 重建 packet epoch，再以 `pk_tgt > pk_idx` 重建 target
+  epoch；两个比较都位于 tag 寄存器之前。
+- E073 不改变 32 项 picker、四项 completion spill、BKPR 阈值或调度策略。
+  它把 ROB 原有 5-bit target index 扩为完整 6-bit target sequence tag，在
+  allocation 时一次确定 epoch。safe picker 沿用原有 target payload mux 直接
+  选择六位 tag；ROB wake 也直接使用该 tag。因此没有新增独立 epoch mux，且
+  从关键路径删除了 target epoch 重建逻辑。
+- quick、九个重载 seeds 3/5/7/11/13/17/19/23/29、DEPHEAVY seeds
+  7/19/41、mid、sparse、60k DEPHEAVY、dual/full 均通过，所有 cycles 与
+  E072A 完全一致；重载依次为 8721/8671/8665/8653/8691/8653/8544/8595/8586，
+  DEPHEAVY 为 14355/14214/14229，dual/full seed7 为 8597/7640。
+- 同一 Yosys/ABC simple 配对代理下，全局 low/nom/high 最大 arrival 与
+  E072A 同为 0.7950/0.8675/0.9400 ns；专门约束 `rdy_q → pk_tseq_q` 后，
+  nominal arrival 从 0.8400 降至 0.6600 ns（-180 ps，-21.4%）。nominal
+  >0.4 ns 端点从 1860 降到 1762。代理 cells 从 177731 增到 178902
+  （+1171，+0.66%），时序端点从 6530 增到 6562，主要代价是每项新增一个
+  target epoch 状态位。
+- 两个更直接的实现已在提交前淘汰：独立携带 predecoded epoch 虽把目标路径
+  降到 0.6325 ns，但 cells/近临界端点增加更多；仅用 bank0→bank3 关系替换
+  `target > index` 比较，则未切断 packet epoch 依赖，目标和全局代理均恶化。
+  E073 仍只是实际 STA 候选，不能用本地经验门延迟代理宣称已满足 0.4 ns
+  周期与 0.045 ns uncertainty。
 
 ## 分支与提交约定
 
