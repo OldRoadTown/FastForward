@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
+// RTL revision : 4FE-safe-v68b
+// Experiment   : E068B-R32-issue-credit-only
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// Changes      : consume actual issue progress in the BKPR decision only
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -260,9 +260,8 @@ module ff_rob #(
   wire [SW-1:0] occ       = alloc_nxt - out_seq_q;
   wire [SW-1:0] win       = alloc_nxt - old_u_q;
 
-  // Credit only progress that is guaranteed to occur at this edge. Retirement
-  // is already available as a four-bit thermometer. For the issue window,
-  // inspect at most four consecutive entries at old_u; this is a conservative
+  // Credit only issue progress that is guaranteed to occur at this edge. Scan
+  // at most four consecutive entries at old_u; this is a conservative
   // lower bound on old_u_n-old_u_q and avoids placing the full peH/old_u_n cone
   // on bkpr_r. dist_f prevents stale iss bits beyond the allocation frontier
   // from being counted after physical-index wraparound.
@@ -280,15 +279,8 @@ module ff_rob #(
   assign adv_therm[2] = adv_therm[1] & dist_ge3 & iss_eff[cred_i2];
   assign adv_therm[3] = adv_therm[2] & dist_ge4 & iss_eff[cred_i3];
 
-  // Convert each thermometer to a one-hot count (0..4), then select fixed
-  // threshold comparisons in parallel. The effective raw thresholds rise by
-  // actual same-edge progress, while the post-progress safety limits remain
-  // OCC_TH=23 and WIN_TH=17.
-  wire [4:0] pop_count_oh = { pop_therm[3],
-                              pop_therm[2] & ~pop_therm[3],
-                              pop_therm[1] & ~pop_therm[2],
-                              pop_therm[0] & ~pop_therm[1],
-                             ~pop_therm[0] };
+  // Convert the issue thermometer to a one-hot count (0..4), then select fixed
+  // threshold comparisons in parallel. Keep OCC_TH fixed at 23.
   wire [4:0] adv_count_oh = { adv_therm[3],
                               adv_therm[2] & ~adv_therm[3],
                               adv_therm[1] & ~adv_therm[2],
@@ -296,16 +288,7 @@ module ff_rob #(
                              ~adv_therm[0] };
 
   wire occ_gt23 = occ[5] | (occ[4] & occ[3]);
-  wire occ_gt24 = occ[5] | (occ[4] & occ[3] & (|occ[2:0]));
-  wire occ_gt25 = occ[5] | (occ[4] & occ[3] & (occ[2] | occ[1]));
-  wire occ_gt26 = occ[5] | (occ[4] & occ[3]
-                            & (occ[2] | (occ[1] & occ[0])));
-  wire occ_gt27 = occ[5] | (&occ[4:2]);
-  wire occ_over = (pop_count_oh[0] & occ_gt23)
-                | (pop_count_oh[1] & occ_gt24)
-                | (pop_count_oh[2] & occ_gt25)
-                | (pop_count_oh[3] & occ_gt26)
-                | (pop_count_oh[4] & occ_gt27);
+  wire occ_over = occ_gt23;
 
   wire win_gt17 = win[5] | (win[4] & (|win[3:1]));
   wire win_gt18 = win[5] | (win[4]
@@ -338,17 +321,11 @@ module ff_rob #(
                           + {2'b0, adv_therm[1]}
                           + {2'b0, adv_therm[2]}
                           + {2'b0, adv_therm[3]};
-  wire [2:0] pop_credit_n = {2'b0, pop_therm[0]}
-                          + {2'b0, pop_therm[1]}
-                          + {2'b0, pop_therm[2]}
-                          + {2'b0, pop_therm[3]};
   always @(posedge clk) begin
     if (rst_n && (reuse_span_n > (D-7)))
       $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
     if (rst_n && ({{(SW-3){1'b0}}, adv_credit_n} > old_u_adv_n))
       $error("[ff_rob] issue credit exceeds old-u advance @%0t", $time);
-    if (rst_n && (pop_credit_n != pop_cnt))
-      $error("[ff_rob] retirement credit/count mismatch @%0t", $time);
   end
 `endif
 
