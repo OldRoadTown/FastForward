@@ -154,6 +154,35 @@
   实现不得把 wake 接回全局 picker，也不得恢复 E069 的 32-entry 全局
   tag 比较；若实际 cycles 收益不足 2% 或真实 STA 劣于 E068，则否决。
 
+### E072-P completion capacity shadow
+
+- E072-P 提交 `612679c4eb59ee29b68e07775cafedbd026baf15` 只修改
+  testbench；综合 RTL、DUT 端口和 E068 cycles 完全不变。shadow 在与
+  E068 `occ_over/win_over` 相同的决策时刻，统计32-entry decoupled IQ
+  以及完成容量32/36/38/40/48/64的被动阻塞结果。模型保留两拍、最多
+  8包的入口裕量；completion 阈值分别为23/27/29/31/39/55，IQ 保守
+  使用23。该模型不改变 DUT 流量，因此结果是容量方向筛选，不是精确的
+  counterfactual cycles。
+- heavy 九个 seed 合计81471 cycles、36364次现有阻塞决策。完成容量
+  32/36/38/40时分别可避免14002/34632/36176/36364次，即
+  38.51%/95.24%/99.48%/100%；对应剩余shadow阻塞为
+  22362/1732/188/0。heavy 的 post-progress completion 峰值31，
+  IQ-after-progress 峰值20，说明当前 trace 中瓶颈是已发射未退休项，
+  不是32-entry IQ容量。
+- DEPHEAVY seeds 7/19/41 共29662次现有阻塞决策；容量36/38/40分别
+  可避免28901/29604/29635次，即97.43%/99.80%/99.91%。容量40仍剩
+  27次均为IQ压力，IQ峰值25。60k DEPHEAVY seed73的对应覆盖率为
+  97.42%/99.78%/99.89%，结论一致。
+- mid seed11在容量36/38/40下分别覆盖99.05%/100%/100%；sparse
+  seed11没有现有容量阻塞。所有用例功能检查、live-entry partition和
+  C32 occupancy等价断言通过，shadow没有产生当前决策之外的额外阻塞。
+- 容量48和64在所有被测 trace 上均不优于40，因此排除直接ROB64。
+  E072-P显著超过“至少15%可避免阻塞”的RTL筛选门槛；下一候选应从
+  4-entry issued-completion spill（总完成容量36）开始，而不是扩大picker
+  或统一ROB。RTL必须保持32-entry 4x8 picker，并单独解决6-bit epoch tag、
+  spill结果返回、依赖结果读取和顺序退休合并；若heavy实际cycles改善
+  不足5%或任一时序代理劣于E068，则否决。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -182,5 +211,7 @@
   testbench 统计，用于否决 HOL priority 并选择后续优化方向。
 - `codex/e071-e068-replay-oracle`：从 E068 综合 RTL 创建的独立 E071；
   先以 testbench oracle 量化单入口 replay 上限，再决定是否加入 RTL。
+- `codex/e072-e068-capacity-shadow`：从 E068 综合 RTL 创建的纯验证画像；
+  比较32-entry IQ与4/6/8项completion spill，不修改综合设计。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
