@@ -127,6 +127,50 @@ module tb_top;
   int stat_bkpr   = 0;
   int stat_occ    = 0;
   int stat_win    = 0;
+  // E070-P profiling is testbench-only.  Keep the counters outside the DUT so
+  // the measured E068 RTL, synthesis graph and timing are bit-for-bit intact.
+  longint unsigned stat_issue_w0 = 0;
+  longint unsigned stat_issue_w1 = 0;
+  longint unsigned stat_issue_w2 = 0;
+  longint unsigned stat_issue_w3 = 0;
+  longint unsigned stat_issue_w4 = 0;
+  longint unsigned stat_pop_w0 = 0;
+  longint unsigned stat_pop_w1 = 0;
+  longint unsigned stat_pop_w2 = 0;
+  longint unsigned stat_pop_w3 = 0;
+  longint unsigned stat_pop_w4 = 0;
+  longint unsigned stat_pick_idle = 0;
+  longint unsigned stat_pick_no_ready = 0;
+  longint unsigned stat_pick_sched_block = 0;
+  longint unsigned stat_idle_other_ready = 0;
+  longint unsigned stat_idle_steal_eligible = 0;
+  longint unsigned stat_cycles_steal_eligible = 0;
+  longint unsigned stat_idle_same_waiting = 0;
+  longint unsigned stat_no_ready_cycles = 0;
+  longint unsigned stat_no_ready_waiting = 0;
+  longint unsigned stat_ready_entry_cycles = 0;
+  longint unsigned stat_wait_entry_cycles = 0;
+  longint unsigned stat_wake_events = 0;
+  longint unsigned stat_adv_gt4 = 0;
+  longint unsigned stat_adv_gt4_bkpr = 0;
+  longint unsigned stat_adv_undercredit = 0;
+  longint unsigned stat_adv_credit_lost = 0;
+  longint unsigned stat_bkpr_no_cause = 0;
+  longint unsigned stat_retire_width_limit = 0;
+  longint unsigned stat_retire_block_wtg = 0;
+  longint unsigned stat_retire_block_rdy = 0;
+  longint unsigned stat_retire_block_picked = 0;
+  longint unsigned stat_retire_block_issued = 0;
+  longint unsigned stat_retire_block_other = 0;
+  longint unsigned stat_old_u_wtg = 0;
+  longint unsigned stat_old_u_rdy = 0;
+  longint unsigned stat_old_u_picked = 0;
+  longint unsigned stat_old_u_other = 0;
+  longint unsigned stat_old_u_wtg_tgt_rdy = 0;
+  longint unsigned stat_old_u_wtg_tgt_picked = 0;
+  longint unsigned stat_old_u_wtg_tgt_issued = 0;
+  longint unsigned stat_old_u_wtg_tgt_result = 0;
+  longint unsigned stat_old_u_wtg_tgt_other = 0;
   int rd_seq    = 0;
   int errors    = 0;
   int first_in  = -1;
@@ -143,6 +187,21 @@ module tb_top;
       end
     end
   endtask
+
+  // Mirror ff_pick.stcfl for profiling only.  This lets the testbench count
+  // genuine one-steal opportunities after subtracting the donor's own issue.
+  function automatic bit prof_stcfl(input logic [3:0] sched,
+                                     input logic       pkv,
+                                     input logic [1:0] pkl,
+                                     input int         donor_class);
+    bit conflict;
+    conflict = 1'b0;
+    if (donor_class == 0) conflict = sched[2];
+    else if (donor_class == 1) conflict = sched[3];
+    if (donor_class != 3)
+      if (pkv && (int'(pkl) == donor_class + 1)) conflict = 1'b1;
+    return conflict;
+  endfunction
 
   // --------------------------------------------------------------------------
   // main negedge process: monitors first, then drive
@@ -287,12 +346,179 @@ module tb_top;
 
       // ---------------- stats ----------------
       if (first_in >= 0 && rd_seq < NPKT) begin
+        int issue_w;
+        int ready_total;
+        int wait_total;
+        int wake_total;
+        int ready_cls [0:3];
+        int wait_cls [0:3];
+        int old_adv;
+        int adv_credit;
+        int live_cnt;
+        int block_idx;
+        int old_idx;
+        int tgt_idx;
+        int steal_cycle;
+        logic [5:0] live_diff;
+
         stat_cycles++;
         if (bkpr) stat_bkpr++;
         // E068 applies same-edge retirement/issue credit, so sample the
         // actual qualified causes rather than the pre-credit raw distances.
         if (u_ff.u_rob.occ_over) stat_occ++;
         if (u_ff.u_rob.win_over) stat_win++;
+
+        issue_w = 0;
+        ready_total = 0;
+        wait_total = 0;
+        wake_total = 0;
+        for (int f = 0; f < 4; f++) begin
+          issue_w += fw_v[f] ? 1 : 0;
+          ready_cls[f] = 0;
+          wait_cls[f] = 0;
+        end
+        case (issue_w)
+          0: stat_issue_w0++;
+          1: stat_issue_w1++;
+          2: stat_issue_w2++;
+          3: stat_issue_w3++;
+          4: stat_issue_w4++;
+          default: begin end
+        endcase
+
+        case (int'(u_ff.pop_cnt))
+          0: stat_pop_w0++;
+          1: stat_pop_w1++;
+          2: stat_pop_w2++;
+          3: stat_pop_w3++;
+          4: stat_pop_w4++;
+          default: begin end
+        endcase
+
+        // Integrate ready/waiting pressure and classify every unused picker
+        // lane.  Counters such as other-ready and same-waiting intentionally
+        // overlap: they are attribution signals, not a partition of cycles.
+        for (int e = 0; e < 32; e++) begin
+          int cls;
+          cls = int'(u_ff.rob_lat_f[e*2 +: 2]);
+          if (u_ff.rdy_q[e] && !u_ff.picked[e]) begin
+            ready_total++;
+            ready_cls[cls]++;
+          end
+          if (u_ff.u_rob.wtg_q[e]) begin
+            wait_total++;
+            wait_cls[cls]++;
+          end
+          if (u_ff.wake_now[e]) wake_total++;
+        end
+        stat_ready_entry_cycles += longint'(ready_total);
+        stat_wait_entry_cycles += longint'(wait_total);
+        stat_wake_events += longint'(wake_total);
+        if (ready_total == 0) begin
+          stat_no_ready_cycles++;
+          if (wait_total != 0) stat_no_ready_waiting++;
+        end
+
+        steal_cycle = 0;
+        for (int f = 0; f < 4; f++) begin
+          if (!u_ff.u_pick.pk_v_n[f]) begin
+            int steal_ok;
+            stat_pick_idle++;
+            if (u_ff.u_pick.fnd_raw[f] && u_ff.u_pick.own_cfl[f])
+              stat_pick_sched_block++;
+            else
+              stat_pick_no_ready++;
+            if ((ready_total - ready_cls[f]) > 0)
+              stat_idle_other_ready++;
+            if (wait_cls[f] > 0)
+              stat_idle_same_waiting++;
+            steal_ok = 0;
+            for (int d = 0; d < 4; d++) begin
+              int donor_surplus;
+              donor_surplus = ready_cls[d]
+                              - (u_ff.u_pick.pk_v_n[d] ? 1 : 0);
+              if ((d != f) && (donor_surplus > 0)
+                  && !prof_stcfl(u_ff.sched_v_f[f*4 +: 4],
+                                 u_ff.pk_v_q[f],
+                                 u_ff.pk_lat_f[f*2 +: 2], d))
+                steal_ok = 1;
+            end
+            if (steal_ok != 0) begin
+              stat_idle_steal_eligible++;
+              steal_cycle = 1;
+            end
+          end
+        end
+        if (steal_cycle != 0) stat_cycles_steal_eligible++;
+
+        // Attribute the oldest-unissued entry.  If it is waiting, distinguish
+        // whether prioritising its producer could still help or the producer
+        // has already issued and only result latency remains.
+        if (u_ff.u_rob.dist_f != 0) begin
+          old_idx = int'(u_ff.old_u[4:0]);
+          if (u_ff.u_rob.wtg_q[old_idx]) begin
+            stat_old_u_wtg++;
+            tgt_idx = int'(u_ff.rob_tgt_f[old_idx*5 +: 5]);
+            if (u_ff.rdy_q[tgt_idx] && !u_ff.picked[tgt_idx])
+              stat_old_u_wtg_tgt_rdy++;
+            else if (u_ff.picked[tgt_idx])
+              stat_old_u_wtg_tgt_picked++;
+            else if (u_ff.u_rob.iss_q[tgt_idx])
+              stat_old_u_wtg_tgt_issued++;
+            else if (u_ff.resv_q[tgt_idx] || u_ff.res_now[tgt_idx]
+                     || u_ff.res_pred[tgt_idx])
+              stat_old_u_wtg_tgt_result++;
+            else
+              stat_old_u_wtg_tgt_other++;
+          end else if (u_ff.rdy_q[old_idx]) begin
+            stat_old_u_rdy++;
+          end else if (u_ff.picked[old_idx]) begin
+            stat_old_u_picked++;
+          end else begin
+            stat_old_u_other++;
+          end
+        end
+
+        // E068 credits at most four entries even when filling a prior hole
+        // lets old_u jump across a longer already-issued run.  Measure the
+        // exact missed opportunity before deciding whether a summary network
+        // is worthwhile.
+        old_adv = int'(u_ff.u_rob.old_u_adv_n);
+        adv_credit = int'(u_ff.u_rob.adv_credit_n);
+        if (old_adv > 4) begin
+          stat_adv_gt4++;
+          if (bkpr) stat_adv_gt4_bkpr++;
+        end
+        if (old_adv > adv_credit) begin
+          stat_adv_undercredit++;
+          stat_adv_credit_lost += longint'(old_adv) - longint'(adv_credit);
+        end
+        if (bkpr && !u_ff.u_rob.occ_over && !u_ff.u_rob.win_over)
+          stat_bkpr_no_cause++;
+
+        // The first live entry after this cycle's contiguous pop is the
+        // retirement blocker.  A full four-wide pop is an interface-width
+        // limit, not a dependency/issue stall.
+        live_diff = u_ff.alloc_seq - u_ff.out_seq;
+        live_cnt = int'(live_diff);
+        if (live_cnt > int'(u_ff.pop_cnt)) begin
+          if (u_ff.pop_cnt == 3'd4) begin
+            stat_retire_width_limit++;
+          end else begin
+            block_idx = (int'(u_ff.out_seq[4:0])
+                         + int'(u_ff.pop_cnt)) & 31;
+            if (u_ff.u_rob.wtg_q[block_idx])
+              stat_retire_block_wtg++;
+            else if (u_ff.rdy_q[block_idx])
+              stat_retire_block_rdy++;
+            else if (u_ff.picked[block_idx])
+              stat_retire_block_picked++;
+            else if (u_ff.u_rob.iss_q[block_idx])
+              stat_retire_block_issued++;
+            else
+              stat_retire_block_other++;
+          end
+        end
       end
 
       // ---------------- end / watchdog ----------------
@@ -322,6 +548,40 @@ module tb_top;
       $display(" throughput = %.3f pkt/cycle", real'(NPKT) / real'(cyc_total));
     $display(" bkpr: %0d / %0d cycles (occ-cause %0d, win-cause %0d)",
              stat_bkpr, stat_cycles, stat_occ, stat_win);
+    $display(" profile issue-width 0/1/2/3/4 = %0d/%0d/%0d/%0d/%0d",
+             stat_issue_w0, stat_issue_w1, stat_issue_w2,
+             stat_issue_w3, stat_issue_w4);
+    $display(" profile retire-width 0/1/2/3/4 = %0d/%0d/%0d/%0d/%0d",
+             stat_pop_w0, stat_pop_w1, stat_pop_w2,
+             stat_pop_w3, stat_pop_w4);
+    $display(" profile picker idle/no-ready/sched-block = %0d/%0d/%0d",
+             stat_pick_idle, stat_pick_no_ready, stat_pick_sched_block);
+    $display(" profile idle with other-ready/same-class-waiting = %0d/%0d",
+             stat_idle_other_ready, stat_idle_same_waiting);
+    $display(" profile steal-eligible lane-slots/cycles = %0d/%0d",
+             stat_idle_steal_eligible, stat_cycles_steal_eligible);
+    $display(" profile no-ready cycles/with-waiting = %0d/%0d",
+             stat_no_ready_cycles, stat_no_ready_waiting);
+    $display(" profile ready/wait entry-cycles, wake events = %0d/%0d/%0d",
+             stat_ready_entry_cycles, stat_wait_entry_cycles,
+             stat_wake_events);
+    $display(" profile old-u adv>4/all, while-bkpr = %0d/%0d",
+             stat_adv_gt4, stat_adv_gt4_bkpr);
+    $display(" profile advance undercredit cycles/lost entries = %0d/%0d",
+             stat_adv_undercredit, stat_adv_credit_lost);
+    $display(" profile bkpr without current qualified cause = %0d",
+             stat_bkpr_no_cause);
+    $display(" profile retire blocker width/wtg/rdy/picked/issued/other = %0d/%0d/%0d/%0d/%0d/%0d",
+             stat_retire_width_limit, stat_retire_block_wtg,
+             stat_retire_block_rdy, stat_retire_block_picked,
+             stat_retire_block_issued, stat_retire_block_other);
+    $display(" profile old-u state wtg/rdy/picked/other = %0d/%0d/%0d/%0d",
+             stat_old_u_wtg, stat_old_u_rdy,
+             stat_old_u_picked, stat_old_u_other);
+    $display(" profile old-u waiting target rdy/picked/issued/result/other = %0d/%0d/%0d/%0d/%0d",
+             stat_old_u_wtg_tgt_rdy, stat_old_u_wtg_tgt_picked,
+             stat_old_u_wtg_tgt_issued, stat_old_u_wtg_tgt_result,
+             stat_old_u_wtg_tgt_other);
     if (errors == 0) $display(" TEST PASSED");
     else             $display(" TEST FAILED with %0d errors", errors);
     $display("==================================================================");
