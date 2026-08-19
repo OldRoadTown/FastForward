@@ -48,6 +48,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E071A | `73ed2e6afd73ca0b8399c79ff32bc016061a9bc2` | same-FE-head-replay | 8959 | 10559 | — | — | — | — | 152096‡ | — | — | — | **否决，不得作为 base。** 单入口 head replay 只占用 target 返回的同一条空 FE，并只监听 scheduler 已寄存 slot2 tag；seed7 heavy -1.22%，九个 heavy 平均 -1.18%，三个 DEPHEAVY 平均 -3.12%，mid -1.01%。但配对 ABC simple 的 low/nom/high 最大 arrival 从 E068 的 0.7950/0.8675/0.9400 恶化到 0.8100/0.8875/0.9650 ns，cells 148434→152096（+2.47%）。收益未过 2% heavy 门槛且时序恶化，隔离归档。`‡` 为本次配对重综合绝对数。 |
 
 ### E066 基线与否决记录
 
@@ -154,6 +155,29 @@
   实现不得把 wake 接回全局 picker，也不得恢复 E069 的 32-entry 全局
   tag 比较；若实际 cycles 收益不足 2% 或真实 STA 劣于 E068，则否决。
 
+### E071A same-FE replay 否决记录
+
+- E071A 只快照一份 `old_u` waiting 元数据，并且只在 target 返回的同一条
+  FE 下一拍为空、scheduler 返回槽无冲突时注入。依赖数据直接使用本地
+  FEOUT，不建立跨 FE 数据 mux，也不把 wake 接回全局 picker。
+- 为避免 E069 类全局比较，replay 最终只监听 scheduler 的寄存 slot2 tag。
+  heavy、DEPHEAVY 和 mid 的全部实际 replay arm 都来自该寄存 tag，来自
+  本拍 latency-0 issue 的次数为 0，因此这一收紧不损失已观察到的收益。
+- heavy 九个 seed cycles 为
+  9010/8963/8959/8939/9011/8951/8841/8913/8920，平均 8945.222，
+  相对 E068 的 9052.333 仅改善 1.183%。DEPHEAVY seeds 7/19/41 为
+  14543/14381/14393，平均 14439.0（-3.124%）；mid 为 10559
+  （-1.012%）。quick、heavy seed7、DEPHEAVY seed7 及 replay 同源/单发
+  断言通过。
+- 同一 Yosys/ABC 命令配对重综合下，E068→E071A 的 low/nom/high 最大
+  arrival 为 0.7950/0.8675/0.9400→0.8100/0.8875/0.9650 ns，cells
+  148434→152096（+2.47%），时序状态位 5831→5904。最大路径重新落到
+  `pk_idx_q → pre/wake → rdy_q` 类路径。即便该路径不是 replay 的直接
+  数据链，新增逻辑仍改变了全局映射和近临界结构，不能宣称时序不变。
+- 结论：同时触发“heavy 收益不足 2%”和“代理时序劣于 E068”两项否决
+  条件。E071A 仅在 `codex/e071a-e068-samefe-replay` 隔离归档；后续仍以
+  E068 为综合 RTL base，或以纯 testbench 的 E071 oracle 分支继续画像。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -182,5 +206,7 @@
   testbench 统计，用于否决 HOL priority 并选择后续优化方向。
 - `codex/e071-e068-replay-oracle`：从 E068 综合 RTL 创建的独立 E071；
   先以 testbench oracle 量化单入口 replay 上限，再决定是否加入 RTL。
+- `codex/e071a-e068-samefe-replay`：E071 的 same-FE RTL 隔离候选；因
+  heavy 收益不足 2% 且代理时序恶化已否决，不得作为后续 base。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
