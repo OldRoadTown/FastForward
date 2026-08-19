@@ -183,6 +183,39 @@ module tb_top;
   longint unsigned stat_replay_safe_lat1 = 0;
   longint unsigned stat_replay_safe_lat2 = 0;
   longint unsigned stat_replay_safe_lat3 = 0;
+  // E072-P passive capacity model.  The shadow never changes DUT flow; it
+  // classifies the current E068 trace using a decoupled 32-entry issue queue
+  // and completion capacities 32/40/48/64.
+  longint unsigned stat_shadow_base_block = 0;
+  longint unsigned stat_shadow_iq_block = 0;
+  longint unsigned stat_shadow_c32_block = 0;
+  longint unsigned stat_shadow_c36_block = 0;
+  longint unsigned stat_shadow_c38_block = 0;
+  longint unsigned stat_shadow_c40_block = 0;
+  longint unsigned stat_shadow_c48_block = 0;
+  longint unsigned stat_shadow_c64_block = 0;
+  longint unsigned stat_shadow_32_block = 0;
+  longint unsigned stat_shadow_36_block = 0;
+  longint unsigned stat_shadow_38_block = 0;
+  longint unsigned stat_shadow_40_block = 0;
+  longint unsigned stat_shadow_48_block = 0;
+  longint unsigned stat_shadow_64_block = 0;
+  longint unsigned stat_shadow_32_avoided = 0;
+  longint unsigned stat_shadow_36_avoided = 0;
+  longint unsigned stat_shadow_38_avoided = 0;
+  longint unsigned stat_shadow_40_avoided = 0;
+  longint unsigned stat_shadow_48_avoided = 0;
+  longint unsigned stat_shadow_64_avoided = 0;
+  longint unsigned stat_shadow_32_extra = 0;
+  longint unsigned stat_shadow_36_extra = 0;
+  longint unsigned stat_shadow_38_extra = 0;
+  longint unsigned stat_shadow_40_extra = 0;
+  longint unsigned stat_shadow_48_extra = 0;
+  longint unsigned stat_shadow_64_extra = 0;
+  longint unsigned stat_shadow_unissued_entry_cycles = 0;
+  longint unsigned stat_shadow_issued_entry_cycles = 0;
+  int stat_shadow_post_occ_max = 0;
+  int stat_shadow_iq_after_max = 0;
   int rd_seq    = 0;
   int errors    = 0;
   int first_in  = -1;
@@ -374,6 +407,26 @@ module tb_top;
         int replay_cls;
         int replay_idle;
         int replay_slots;
+        int shadow_live;
+        int shadow_unissued;
+        int shadow_issued;
+        int shadow_post_occ;
+        int shadow_iq_after;
+        int shadow_idx;
+        bit shadow_base_block;
+        bit shadow_iq_block;
+        bit shadow_c32_block;
+        bit shadow_c36_block;
+        bit shadow_c38_block;
+        bit shadow_c40_block;
+        bit shadow_c48_block;
+        bit shadow_c64_block;
+        bit shadow_32_block;
+        bit shadow_36_block;
+        bit shadow_38_block;
+        bit shadow_40_block;
+        bit shadow_48_block;
+        bit shadow_64_block;
         logic [5:0] live_diff;
 
         stat_cycles++;
@@ -382,6 +435,90 @@ module tb_top;
         // actual qualified causes rather than the pre-credit raw distances.
         if (u_ff.u_rob.occ_over) stat_occ++;
         if (u_ff.u_rob.win_over) stat_win++;
+
+        // Counterfactual capacity classifier at the same decision point as
+        // E068 occ_over/win_over.  Current picked entries are guaranteed to
+        // leave a decoupled IQ at the next edge; acnt enters it at that edge.
+        // Keep eight slots of two-cycle ingress reserve.  Completion rings use
+        // capacity-1-8 thresholds (23/31/39/55); the explicit IQ conservatively
+        // uses the same 23-entry limit as today's 32-entry occupancy ring.
+        live_diff = u_ff.alloc_seq - u_ff.out_seq;
+        shadow_live = int'(live_diff);
+        shadow_unissued = 0;
+        shadow_issued = 0;
+        for (int so = 0; so < 32; so++) begin
+          if (so < shadow_live) begin
+            shadow_idx = (int'(u_ff.out_seq[4:0]) + so) & 31;
+            if (u_ff.u_rob.iss_eff[shadow_idx]) shadow_issued++;
+            else                                shadow_unissued++;
+          end
+        end
+        shadow_post_occ = int'(u_ff.u_rob.occ) - int'(u_ff.pop_cnt);
+        shadow_iq_after = shadow_unissued + int'(u_ff.acnt);
+        shadow_base_block = u_ff.u_rob.occ_over || u_ff.u_rob.win_over;
+        shadow_iq_block = shadow_iq_after > 23;
+        shadow_c32_block = shadow_post_occ > 23;
+        shadow_c36_block = shadow_post_occ > 27;
+        shadow_c38_block = shadow_post_occ > 29;
+        shadow_c40_block = shadow_post_occ > 31;
+        shadow_c48_block = shadow_post_occ > 39;
+        shadow_c64_block = shadow_post_occ > 55;
+        shadow_32_block = shadow_iq_block || shadow_c32_block;
+        shadow_36_block = shadow_iq_block || shadow_c36_block;
+        shadow_38_block = shadow_iq_block || shadow_c38_block;
+        shadow_40_block = shadow_iq_block || shadow_c40_block;
+        shadow_48_block = shadow_iq_block || shadow_c48_block;
+        shadow_64_block = shadow_iq_block || shadow_c64_block;
+
+        chk((shadow_unissued + shadow_issued) == shadow_live,
+            "E072 shadow live-entry partition mismatch");
+        chk(shadow_c32_block == u_ff.u_rob.occ_over,
+            "E072 shadow c32 occupancy must mirror E068");
+
+        stat_shadow_base_block += longint'(shadow_base_block);
+        stat_shadow_iq_block += longint'(shadow_iq_block);
+        stat_shadow_c32_block += longint'(shadow_c32_block);
+        stat_shadow_c36_block += longint'(shadow_c36_block);
+        stat_shadow_c38_block += longint'(shadow_c38_block);
+        stat_shadow_c40_block += longint'(shadow_c40_block);
+        stat_shadow_c48_block += longint'(shadow_c48_block);
+        stat_shadow_c64_block += longint'(shadow_c64_block);
+        stat_shadow_32_block += longint'(shadow_32_block);
+        stat_shadow_36_block += longint'(shadow_36_block);
+        stat_shadow_38_block += longint'(shadow_38_block);
+        stat_shadow_40_block += longint'(shadow_40_block);
+        stat_shadow_48_block += longint'(shadow_48_block);
+        stat_shadow_64_block += longint'(shadow_64_block);
+        stat_shadow_32_avoided += longint'(shadow_base_block
+                                           && !shadow_32_block);
+        stat_shadow_36_avoided += longint'(shadow_base_block
+                                           && !shadow_36_block);
+        stat_shadow_38_avoided += longint'(shadow_base_block
+                                           && !shadow_38_block);
+        stat_shadow_40_avoided += longint'(shadow_base_block
+                                           && !shadow_40_block);
+        stat_shadow_48_avoided += longint'(shadow_base_block
+                                           && !shadow_48_block);
+        stat_shadow_64_avoided += longint'(shadow_base_block
+                                           && !shadow_64_block);
+        stat_shadow_32_extra += longint'(!shadow_base_block
+                                         && shadow_32_block);
+        stat_shadow_36_extra += longint'(!shadow_base_block
+                                         && shadow_36_block);
+        stat_shadow_38_extra += longint'(!shadow_base_block
+                                         && shadow_38_block);
+        stat_shadow_40_extra += longint'(!shadow_base_block
+                                         && shadow_40_block);
+        stat_shadow_48_extra += longint'(!shadow_base_block
+                                         && shadow_48_block);
+        stat_shadow_64_extra += longint'(!shadow_base_block
+                                         && shadow_64_block);
+        stat_shadow_unissued_entry_cycles += longint'(shadow_unissued);
+        stat_shadow_issued_entry_cycles += longint'(shadow_issued);
+        if (shadow_post_occ > stat_shadow_post_occ_max)
+          stat_shadow_post_occ_max = shadow_post_occ;
+        if (shadow_iq_after > stat_shadow_iq_after_max)
+          stat_shadow_iq_after_max = shadow_iq_after;
 
         issue_w = 0;
         ready_total = 0;
@@ -639,6 +776,27 @@ module tb_top;
              stat_replay_safe_slots, stat_replay_safe_lat0,
              stat_replay_safe_lat1, stat_replay_safe_lat2,
              stat_replay_safe_lat3);
+    $display(" E072 shadow base/iq/c32/c36/c38/c40/c48/c64 block = %0d/%0d/%0d/%0d/%0d/%0d/%0d/%0d",
+             stat_shadow_base_block, stat_shadow_iq_block,
+             stat_shadow_c32_block, stat_shadow_c36_block,
+             stat_shadow_c38_block, stat_shadow_c40_block,
+             stat_shadow_c48_block, stat_shadow_c64_block);
+    $display(" E072 shadow combined c32/c36/c38/c40/c48/c64 block = %0d/%0d/%0d/%0d/%0d/%0d",
+             stat_shadow_32_block, stat_shadow_36_block,
+             stat_shadow_38_block, stat_shadow_40_block,
+             stat_shadow_48_block, stat_shadow_64_block);
+    $display(" E072 shadow avoided current decisions c32/c36/c38/c40/c48/c64 = %0d/%0d/%0d/%0d/%0d/%0d",
+             stat_shadow_32_avoided, stat_shadow_36_avoided,
+             stat_shadow_38_avoided, stat_shadow_40_avoided,
+             stat_shadow_48_avoided, stat_shadow_64_avoided);
+    $display(" E072 shadow extra decisions c32/c36/c38/c40/c48/c64 = %0d/%0d/%0d/%0d/%0d/%0d",
+             stat_shadow_32_extra, stat_shadow_36_extra,
+             stat_shadow_38_extra, stat_shadow_40_extra,
+             stat_shadow_48_extra, stat_shadow_64_extra);
+    $display(" E072 shadow unissued/issued entry-cycles, max post-occ/iq-after = %0d/%0d/%0d/%0d",
+             stat_shadow_unissued_entry_cycles,
+             stat_shadow_issued_entry_cycles,
+             stat_shadow_post_occ_max, stat_shadow_iq_after_max);
     if (errors == 0) $display(" TEST PASSED");
     else             $display(" TEST FAILED with %0d errors", errors);
     $display("==================================================================");
