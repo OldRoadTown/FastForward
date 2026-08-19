@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v72a
-// Experiment   : E072A-R32-completion-spill
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : add four issued-completion spill slots behind the 32-entry IQ
+// RTL revision : 4FE-safe-v73
+// Experiment   : E073-stored-target-sequence
+// Based on     : E072A-R32-completion-spill
+// Changes      : store/select full target tag; remove target wrap comparisons
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -113,7 +113,7 @@ module ff #(
   wire [D-1:0]        rdy_q, crit_q, resv_q, rob_isdep;
   wire [D*128-1:0]    rob_data_f;
   wire [D*2-1:0]      rob_lat_f;
-  wire [D*AW-1:0]     rob_tgt_f;
+  wire [D*SW-1:0]     rob_tseq_f;
   wire [SW-1:0]       alloc_seq, out_seq, old_u;
 
   wire [D-1:0]        picked;
@@ -179,7 +179,7 @@ module ff #(
     .resv_o(resv_q),
     .spill_v_o(spill_v), .spill_resv_o(spill_resv),
     .spill_seq_f(spill_seq_f), .spill_data_f(spill_data_f),
-    .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
+    .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tseq_f(rob_tseq_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
     .bkpr_r(pkt_in_bkpr)
@@ -190,7 +190,7 @@ module ff #(
             .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
-    .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
+    .rob_lat_f(rob_lat_f), .rob_tseq_f(rob_tseq_f),
     .rseq(old_u), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_seq_f(pk_seq_f), .pk_tgt_f(pk_tgt_f),

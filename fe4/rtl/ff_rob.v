@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v72a
-// Experiment   : E072A-R32-completion-spill
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : retain up to four overwritten issued entries in completion spill
+// RTL revision : 4FE-safe-v73
+// Experiment   : E073-stored-target-sequence
+// Based on     : E072A-R32-completion-spill
+// Changes      : store full dependency sequence tag; remove target wrap compares
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -60,7 +60,7 @@ module ff_rob #(
   output wire [4*128-1:0]    spill_data_f,
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
-  output wire [D*AW-1:0]     rob_tgt_f,
+  output wire [D*SW-1:0]     rob_tseq_f,
   output wire [D-1:0]        rob_isdep_o,
   output wire [SW-1:0]       alloc_seq_o,
   output wire [SW-1:0]       out_seq_o,
@@ -191,7 +191,7 @@ module ff_rob #(
   // -------------------------------------------------------------------------
   reg [127:0]  rob_data  [0:D-1];       // input data, later the fwded result
   reg [1:0]    rob_lat   [0:D-1];
-  reg [AW-1:0] rob_tgt   [0:D-1];
+  reg [SW-1:0] rob_tseq  [0:D-1];
   reg          rob_isdep [0:D-1];
   reg [D-1:0]  rob_epoch;                // sequence epoch of physical resident
   reg [D-1:0]  rob_alloc_v;              // physical slot has a resident history
@@ -244,19 +244,17 @@ module ff_rob #(
     wake_tgt_spill = 1'b0;
     spill_wait_idx_n = {D{1'b0}};
     for (e = 0; e < D; e = e + 1) begin
-      wake_tgt_seq = {rob_epoch[e], rob_tgt[e]};
-      if (rob_tgt[e] > e[AW-1:0])
-        wake_tgt_seq[SW-1] = ~rob_epoch[e];
+      wake_tgt_seq = rob_tseq[e];
       wake_tgt_spill = spill_v_q[wake_tgt_seq[1:0]]
                        && spill_resv_q[wake_tgt_seq[1:0]]
                        && (spill_seq[wake_tgt_seq[1:0]] == wake_tgt_seq);
       if (wtg_q[e] && spill_v_q[wake_tgt_seq[1:0]]
           && (spill_seq[wake_tgt_seq[1:0]] == wake_tgt_seq))
-        spill_wait_idx_n[rob_tgt[e]] = 1'b1;
-      wake_now[e] = wtg_q[e]
-                    & (res_pred_r[rob_tgt[e]]
-                       | (resv_q[rob_tgt[e]]
-                          & ~spill_wait_idx_q[rob_tgt[e]])
+        spill_wait_idx_n[rob_tseq[e][AW-1:0]] = 1'b1;
+        wake_now[e] = wtg_q[e]
+                    & (res_pred_r[rob_tseq[e][AW-1:0]]
+                       | (resv_q[rob_tseq[e][AW-1:0]]
+                          & ~spill_wait_idx_q[rob_tseq[e][AW-1:0]])
                        | wake_tgt_spill);
     end
   end
@@ -542,7 +540,13 @@ module ff_rob #(
       if (alloc_oh[e]) begin
         rob_data[e]  <= slot_dat[e[1:0]];
         rob_lat[e]   <= slot_lat[e[1:0]];
-        rob_tgt[e]   <= slot_tgt[e[1:0]];
+        // k_dep is 0..7, so the physical target comparison completely
+        // determines the target epoch at allocation. Store the full tag once
+        // rather than rebuilding it on the wake and picker timing paths.
+        rob_tseq[e]  <= {alloc_seq_q[SW-1]
+                          ^ (e[AW-1:0] < alloc_seq_q[AW-1:0])
+                          ^ (slot_tgt[e[1:0]] > e[AW-1:0]),
+                         slot_tgt[e[1:0]]};
         rob_isdep[e] <= slot_isdep[e[1:0]];
       end else if (res_now_r[e]) begin
         rob_data[e] <= fe_od[rob_src[e]];  // unique result source per entry
@@ -557,7 +561,7 @@ module ff_rob #(
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ex
       assign rob_data_f[gi*128 +: 128] = rob_data[gi];
       assign rob_lat_f[gi*2 +: 2]      = rob_lat[gi];
-      assign rob_tgt_f[gi*AW +: AW]    = rob_tgt[gi];
+      assign rob_tseq_f[gi*SW +: SW]   = rob_tseq[gi];
       assign rob_isdep_o[gi]           = rob_isdep[gi];
     end
     for (gi = 0; gi < 4; gi = gi + 1) begin : g_spill_ex
