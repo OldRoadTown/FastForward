@@ -171,6 +171,18 @@ module tb_top;
   longint unsigned stat_old_u_wtg_tgt_issued = 0;
   longint unsigned stat_old_u_wtg_tgt_result = 0;
   longint unsigned stat_old_u_wtg_tgt_other = 0;
+  // E071 oracle: can the oldest waiting entry consume its predicted target
+  // next cycle on an FE lane left unused by the normal timing-safe picker?
+  // These remain testbench-only counters; no replay path exists in the DUT.
+  longint unsigned stat_replay_head_pred = 0;
+  longint unsigned stat_replay_safe = 0;
+  longint unsigned stat_replay_no_idle = 0;
+  longint unsigned stat_replay_sched_block = 0;
+  longint unsigned stat_replay_safe_slots = 0;
+  longint unsigned stat_replay_safe_lat0 = 0;
+  longint unsigned stat_replay_safe_lat1 = 0;
+  longint unsigned stat_replay_safe_lat2 = 0;
+  longint unsigned stat_replay_safe_lat3 = 0;
   int rd_seq    = 0;
   int errors    = 0;
   int first_in  = -1;
@@ -359,6 +371,9 @@ module tb_top;
         int old_idx;
         int tgt_idx;
         int steal_cycle;
+        int replay_cls;
+        int replay_idle;
+        int replay_slots;
         logic [5:0] live_diff;
 
         stat_cycles++;
@@ -459,6 +474,41 @@ module tb_top;
           if (u_ff.u_rob.wtg_q[old_idx]) begin
             stat_old_u_wtg++;
             tgt_idx = int'(u_ff.rob_tgt_f[old_idx*5 +: 5]);
+            // res_pred means the target is scheduled to appear on FEOUT in
+            // the cycle when a pick made now would issue.  Count a replay
+            // only if the normal picker leaves a receiver unused and booking
+            // this entry's latency on that receiver would not collide with a
+            // previously scheduled or currently issuing result.
+            if (u_ff.res_pred[tgt_idx]) begin
+              stat_replay_head_pred++;
+              replay_cls = int'(u_ff.rob_lat_f[old_idx*2 +: 2]);
+              replay_idle = 0;
+              replay_slots = 0;
+              for (int f = 0; f < 4; f++) begin
+                if (!u_ff.u_pick.pk_v_n[f]) begin
+                  replay_idle++;
+                  if (!prof_stcfl(u_ff.sched_v_f[f*4 +: 4],
+                                   u_ff.pk_v_q[f],
+                                   u_ff.pk_lat_f[f*2 +: 2], replay_cls))
+                    replay_slots++;
+                end
+              end
+              if (replay_slots != 0) begin
+                stat_replay_safe++;
+                stat_replay_safe_slots += longint'(replay_slots);
+                case (replay_cls)
+                  0: stat_replay_safe_lat0++;
+                  1: stat_replay_safe_lat1++;
+                  2: stat_replay_safe_lat2++;
+                  3: stat_replay_safe_lat3++;
+                  default: begin end
+                endcase
+              end else if (replay_idle == 0) begin
+                stat_replay_no_idle++;
+              end else begin
+                stat_replay_sched_block++;
+              end
+            end
             if (u_ff.rdy_q[tgt_idx] && !u_ff.picked[tgt_idx])
               stat_old_u_wtg_tgt_rdy++;
             else if (u_ff.picked[tgt_idx])
@@ -582,6 +632,13 @@ module tb_top;
              stat_old_u_wtg_tgt_rdy, stat_old_u_wtg_tgt_picked,
              stat_old_u_wtg_tgt_issued, stat_old_u_wtg_tgt_result,
              stat_old_u_wtg_tgt_other);
+    $display(" E071 oracle head-pred/safe/no-idle/sched-block = %0d/%0d/%0d/%0d",
+             stat_replay_head_pred, stat_replay_safe,
+             stat_replay_no_idle, stat_replay_sched_block);
+    $display(" E071 oracle safe slots, latency 0/1/2/3 = %0d/%0d/%0d/%0d/%0d",
+             stat_replay_safe_slots, stat_replay_safe_lat0,
+             stat_replay_safe_lat1, stat_replay_safe_lat2,
+             stat_replay_safe_lat3);
     if (errors == 0) $display(" TEST PASSED");
     else             $display(" TEST FAILED with %0d errors", errors);
     $display("==================================================================");
