@@ -32,6 +32,7 @@
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32+4-completion-spill | 0 | 0 | 0 | E072A；32 项 issue storage + 4 项已发射 completion spill |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E072A | `43a8326c4f95ca2b82f696a17461432ba5383ff1` | rob32+4-completion-spill | 8665 | 10390 | 24908 | — | — | — | 177731† | — | — | — | 从 E068 独立派生；保留 32 项 issue/picker，只用四项 completion spill 承接被覆盖但尚未返回/退休的已发射项，将安全阈值 23/17 提到 27/21。九个重载 seed 平均仅改善 4.53%，低于 5% 保留门槛；cells +20.03%，故不替代 E068。配对 ABC simple 的 low/nom/high 最大 arrival 与 E068 同为 0.7950/0.8675/0.9400 ns，但真实 STA/PPA 待测。 |
 
 ### E066 基线与否决记录
 
@@ -110,6 +112,37 @@
   上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
   `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
+### E072A 32+4 completion spill 记录
+
+- E072A 不把 picker/issue storage 扩成 ROB64，而是在 E068 的 32 项物理
+  storage 后增加四项 completion-only spill。spill 只接收已发射项，按
+  `sequence[1:0]` 直接索引；调度器携带完整 6-bit tag 与物理归属位，依赖
+  数据在 issue 阶段按完整 tag 选择。该结构把安全 occupancy/issue-window
+  阈值从 23/17 提到 27/21，同时避免 64 项 picker 和 64:1 数据读 mux。
+- 重载 seeds 3/5/7/11/13/17/19/23/29 的 cycles 为
+  8721/8671/8665/8653/8691/8653/8544/8595/8586，平均 8642.111；相对
+  E068 的 9052.333 改善 4.53%。DEPHEAVY seeds 7/19/41 为
+  14355/14214/14229，平均 14266.000，相对 E068 改善 4.29%。mid seed11
+  为 10390（-2.60%），sparse seed11 为 24908（+1 cycle），60k
+  DEPHEAVY seed73 为 43017（-3.97%），dual/full seed7 为 8597/7640
+  （分别 -4.67%/-3.89%）。quick、九个重载、三个 DEPHEAVY、60k、
+  dual/full 均通过。
+- latency-zero 预唤醒直接复用 picker 已寄存的 bank/local one-hot，避免
+  重建 5-to-32 decoder；`old_u` 搜索与 BKPR credit 使用隔离的逻辑副本，
+  防止面积共享给 `picked → old_u_n` 增加一级门。最终配对 ABC simple
+  low/nom/high 最大 arrival 为 0.7950/0.8675/0.9400 ns，与 E068 相同；
+  当前代理关键路径为 `picked → old_u_n`。这是经验门延迟代理，不代表已在
+  0.045 ns uncertainty 下通过真实 STA。
+- 代理 cells 从 E068 的 148066 增至 177731（+20.03%），时序状态端点从
+  5861 增至 6530（+669）。最大 arrival 虽未恶化，但超过 0.4 ns 的
+  nominal 端点为 1860（E068 为 907），且新增 512-bit spill 数据存储会
+  增加面积与翻转功耗。收益未达到预设 5% 门槛，又缺少真实 Power/Area
+  报告，因此 E072A 只作为 ROB64 之前的隔离容量实验保留，不升级为后续
+  优化 base；后续仍以 E068 为 base。
+- 开发中验证并撤销了两条路径：恢复同拍 retirement bypass 会把 nominal
+  最大代理拉到 1.3075 ns；关闭 latency-zero 预唤醒则使 heavy seed7 回到
+  9038 cycles。提交版本两者均不采用。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -134,5 +167,8 @@
   用于真实 STA/功耗不通过时的低逻辑量回退评估。
 - `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
   完整 E068，仅作为归因与复现实验保留。
+- `codex/e072a-e068-completion-spill`：从 E068 创建的 32+4 completion
+  spill 隔离候选；时序代理最大值持平，但 cycles 收益不足 5%、cells
+  增加约 20%，不得替代 E068，仅用于复现容量/时序权衡。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
