@@ -137,6 +137,23 @@
   数据或 `exit_idx → out_seq` 路径。若真实 STA 不劣于 E068 且 cycles
   有稳定收益，再考虑比现有 dual-steal 更简单的单路寄存式偷取。
 
+### E071 单入口 replay oracle
+
+- E071 从 E068 的综合 RTL 独立派生；第一提交只增加 testbench oracle，
+  不修改 DUT、综合 RTL、端口或配置。它只统计如下交集：`old_u` 正在等待
+  依赖、该 target 已由 `pre_v` 预测在下一拍返回、正常 picker 为下一拍
+  留下空 FE，且在该 FE 上预订 `old_u` 的 latency 不会造成返回槽冲突。
+- heavy seeds 3/5/7/11/13/17/19/23/29 的 safe replay 机会为
+  964/879/906/903/964/905/826/911/882，合计 `8140/81471=9.99%`
+  总周期；对应 cycles 与 E068 逐项相同。DEPHEAVY seeds 7/19/41 为
+  2584/2548/2576，合计 `7708/44714=17.24%`；mid seed11 为
+  `1281/10667=12.01%`。全部功能检查通过。
+- 该比例是“可在空 FE 上提前一拍发射最老依赖项”的动态机会，不是最终
+  cycles 收益；下游资源和 workload 相互作用会令实际收益更低。但它已
+  明显超过 3% 的实现门槛，因此允许进入单入口 registered replay RTL。
+  实现不得把 wake 接回全局 picker，也不得恢复 E069 的 32-entry 全局
+  tag 比较；若实际 cycles 收益不足 2% 或真实 STA 劣于 E068，则否决。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -163,5 +180,7 @@
   完整 E068，仅作为归因与复现实验保留。
 - `codex/e070-e068-stall-profile`：从 E068 创建的非综合画像分支；只增加
   testbench 统计，用于否决 HOL priority 并选择后续优化方向。
+- `codex/e071-e068-replay-oracle`：从 E068 综合 RTL 创建的独立 E071；
+  先以 testbench oracle 量化单入口 replay 上限，再决定是否加入 RTL。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
