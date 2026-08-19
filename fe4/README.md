@@ -23,13 +23,18 @@ critical 插队 + 可选的预唤醒同拍送入。
 实例以及 FEIN/FEOUT 连线必须保留在 `ff` 内部。`verif/fe_model.sv`
 提供相同端口契约的本地行为模型，内网综合时由真实 `FE` 实现替换。
 
-默认是内网 STA 使用的 timing-safe 配置：
+E069 本地回归和综合代理的默认配置是：
 
 ```
-WAKE_BYPASS=0  预测唤醒只更新下一拍 ROB 状态，不直通当拍 pick
+WAKE_BYPASS=1  latency1..3 使用提前一拍寄存的 32-bit wake mask
 DUAL_STEAL=0   只保留第一偷取匹配器
 REG_FEIN=0     FEIN 不额外插入寄存级
 ```
+
+这里的 `WAKE_BYPASS` 是历史参数名。E069 不把实时 tag 比较或 FE 数据
+mux 接到 wake-to-picker 路径；picker 只读取 `wtg_q & wake_bind_q`。
+latency0 结果仍跨寄存边界后更新 ready。该配置是待内网 STA/Power 签核的
+性能候选，不能仅凭本地组合路径代理标记为 timing-safe。
 
 `pk_idx_q`、`pk_lat_q` 和 `sec_idx_q` 无条件写入；有效性由 valid
 寄存器限定，避免综合器把完整 pick 组合锥接到这些小寄存器的 ICG
@@ -38,10 +43,11 @@ REG_FEIN=0     FEIN 不额外插入寄存级
 可复现配置：
 
 ```
-make heavy       # timing-safe：WAKE_BYPASS=0, DUAL_STEAL=0
+make heavy       # E069：registered prewake，DUAL_STEAL=0
 make dual-heavy  # 仅用于 A/B：WAKE_BYPASS=0, DUAL_STEAL=1
-make full-heavy  # 原全性能：WAKE_BYPASS=1, DUAL_STEAL=1
+make full-heavy  # E069 prewake + DUAL_STEAL=1
 ```
 
-当前 seed=7、20k 包重载结果：timing-safe 3.333 pkt/cycle，
-full-performance 3.571 pkt/cycle；全部自校验通过。
+当前 seed=7、20k 包重载结果：默认配置 8359 cycles
+（2.393 pkt/cycle），full-heavy 8244 cycles（2.426 pkt/cycle）；全部
+自校验通过。E068 对应默认配置为 9070 cycles。

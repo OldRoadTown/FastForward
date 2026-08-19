@@ -23,15 +23,16 @@
 |---|---:|---:|---:|---|
 | full | 0 | 1 | 1 | 原始全性能参考 |
 | no-bypass-dual | 0 | 0 | 1 | 隔离 bypass 影响 |
-| safe-v1 | 0 | 0 | 0 | 当前默认综合配置 |
+| safe-v1 | 0 | 0 | 0 | 历史 timing-safe 参考 |
 | safe-v2 | 0 | 0 | 0 | registered commit + in-flight mask |
 | safe-v3 | 0 | 0 | 0 | 分层选择；关闭偷取；关键标记/egress 门控解耦 |
 | safe-v4 | 0 | 0 | 0 | 寄存 picked 位图；ROB crit/outp 整向量 next-state |
 | safe-v5 | 0 | 0 | 0 | safe 单主候选选择；ROB 8×8 分层 oldest-unissued 搜索 |
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
-| rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
-| rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-retire-clean | 0 | 0 | 0 | E067；删除冗余退休位图并以 live count 限定退休 |
+| rob32-dynamic-credit | 0 | 0 | 0 | E068；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-registered-prewake | 0 | 1 | 0 | E069；寄存依赖 wake mask，不把 tag 比较接到 picker |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E069 | `068ef8e9177b37f5bb347ff84cc9f6a86ed32bdd` | rob32-registered-prewake | 8359 | 10219 | 24907 | — | — | — | 155296† | — | — | — | 从 E068 独立派生；latency1 的 issue tag 与 latency2/3 的 scheduler slot3 tag 提前匹配依赖目标并寄存 32-bit `wake_bind_q`，picker 侧只有位与。latency0 不走组合 next-pick 预绑定，而以实际返回更新 ready。九个重载 seed 平均 8358.778 cycles（相对 E068 -7.66%），DEPHEAVY 三 seed 平均 13055（-12.41%），60k DEPHEAVY -12.38%，sparse 不变。low/nom/high 最大 arrival 代理为 0.7800/0.8475/0.9150 ns，均未超过 E068；关键路径仍为 `exit_idx → out_seq_q`。总 cells +4.88%，真实 STA/Power/统一 T 待测。 |
 
 ### E066 基线与否决记录
 
@@ -110,6 +112,35 @@
   上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
   `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
+### E069 寄存预唤醒记录
+
+- E069 不让当前 `issue_idx` 经 result bitmap、tag decode 和 picker 形成
+  一条实时组合链。ROB 在前一拍用 latency1 的 issue tag、latency2/3 的
+  scheduler slot3 tag 匹配依赖目标，只把 32-bit `wake_bind_q` 送到 picker。
+  latency0 若要同样提前绑定必须依赖当前 next-pick，故明确留在实际返回后的
+  ready 状态边界，避免重新接通 picker 反馈环。
+- quick 三组 cycles 为 210/274/593。重载 seeds
+  3/5/7/11/13/17/19/23/29 为
+  8419/8382/8359/8372/8407/8367/8290/8344/8289，平均 8358.778；
+  DEPHEAVY seeds 7/19/41 为 13131/13044/12990，平均 13055；mid、
+  sparse、60k DEPHEAVY 分别为 10219/24907/39250。默认配置相对 E068
+  的 cycles 改善分别为 heavy 7.66%、mid 4.20%、DEPHEAVY 12.41%、
+  60k DEPHEAVY 12.38%。dual-heavy/full-heavy seed7 为 9196/8244。
+- E068/E069 配对代理的 low/nom/high 最大 arrival 从
+  0.7950/0.8675/0.9400 ns 降至 0.7800/0.8475/0.9150 ns；名义最大路径
+  缩短 20 ps，仍为 `exit_idx → out_seq_q`。按 nominal arrival 计算，
+  heavy、mid、DEPHEAVY、60k DEPHEAVY 的 `cycles×period` 代理分别改善
+  9.79%、6.41%、14.43%、14.40%。这些数字不能替代统一用例 T。
+- 新增逻辑不是免费收益：代理总 cells 148066→155296（+4.88%），时序
+  cells 5861→5893；nominal 超过 0.400 ns 的端点由 875 增至 1431。
+  因此只能结论为“代理最大路径未恶化且周期数下降”，不能宣称真实 STA、
+  面积或功耗已经通过。若 0.045 ns uncertainty 下真实 STA 或功耗不通过，
+  直接回退到 E068，而不是继续扩大组合旁路。
+- 已否决且未保留的四个子方案：原始 bitmap 全旁路的 nominal 最大
+  arrival 为 1.2175 ns；当前 tag 直接比较为 0.9625 ns；包含 latency0
+  next-pick 的全预绑定为 0.9350 ns；额外寄存 FE source 后为 0.9075 ns。
+  它们均比 E068 的 0.8675 ns 恶化，工作区中没有相关 RTL 残留。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -134,5 +165,7 @@
   用于真实 STA/功耗不通过时的低逻辑量回退评估。
 - `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
   完整 E068，仅作为归因与复现实验保留。
+- `codex/e069-e068-registered-prewake`：从 E068 创建的独立 E069；只保留
+  latency1..3 的寄存预绑定，latency0 不接 next-pick 组合反馈。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
