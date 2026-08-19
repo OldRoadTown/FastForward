@@ -25,6 +25,9 @@
 `ifndef DUAL_STEAL_V
 `define DUAL_STEAL_V 0
 `endif
+`ifndef HEAD_REPLAY_V
+`define HEAD_REPLAY_V 1
+`endif
 
 module tb_top;
 
@@ -65,7 +68,7 @@ module tb_top;
   logic [127:0] fe_d [4];
 
   ff #(.REG_FEIN(`REG_FEIN_V), .WAKE_BYPASS(`WAKE_BYPASS_V),
-       .DUAL_STEAL(`DUAL_STEAL_V)) u_ff (
+       .DUAL_STEAL(`DUAL_STEAL_V), .HEAD_REPLAY(`HEAD_REPLAY_V)) u_ff (
     .clk(clk), .rst_n(rst_n),
     .lane0_pkt_in_vld(li_v[0]), .lane0_pkt_in_data(li_d[0]), .lane0_pkt_in_ctrl(li_c[0]),
     .lane1_pkt_in_vld(li_v[1]), .lane1_pkt_in_data(li_d[1]), .lane1_pkt_in_ctrl(li_c[1]),
@@ -183,6 +186,12 @@ module tb_top;
   longint unsigned stat_replay_safe_lat1 = 0;
   longint unsigned stat_replay_safe_lat2 = 0;
   longint unsigned stat_replay_safe_lat3 = 0;
+  longint unsigned stat_replay_local_safe = 0;
+  longint unsigned stat_replay_local_busy = 0;
+  longint unsigned stat_replay_local_sched_block = 0;
+  longint unsigned stat_replay_issued = 0;
+  longint unsigned stat_replay_arm_sched = 0;
+  longint unsigned stat_replay_arm_lat0 = 0;
   int rd_seq    = 0;
   int errors    = 0;
   int first_in  = -1;
@@ -374,9 +383,25 @@ module tb_top;
         int replay_cls;
         int replay_idle;
         int replay_slots;
+        int replay_local_match;
         logic [5:0] live_diff;
 
         stat_cycles++;
+        for (int f = 0; f < 4; f++) begin
+          if (u_ff.u_pick.replay_v_n[f]) begin
+            if (u_ff.sched_v_f[f*4+1]) stat_replay_arm_sched++;
+            else                       stat_replay_arm_lat0++;
+          end
+          if (u_ff.replay_q[f]) begin
+            stat_replay_issued++;
+            chk(u_ff.pk_v_q[f], "E071 replay must be a valid issue");
+            chk(u_ff.exit_v[f], "E071 replay target must exit on same FE");
+            chk(u_ff.exit_idx_f[f*5 +: 5]
+                == u_ff.pk_tgt_f[f*5 +: 5],
+                "E071 replay target/source mismatch");
+          end
+        end
+        chk($onehot0(u_ff.replay_q), "E071 allows at most one replay");
         if (bkpr) stat_bkpr++;
         // E068 applies same-edge retirement/issue credit, so sample the
         // actual qualified causes rather than the pre-credit raw distances.
@@ -484,7 +509,20 @@ module tb_top;
               replay_cls = int'(u_ff.rob_lat_f[old_idx*2 +: 2]);
               replay_idle = 0;
               replay_slots = 0;
+              replay_local_match = 0;
               for (int f = 0; f < 4; f++) begin
+                if (u_ff.pre_v[f]
+                    && (u_ff.pre_idx_f[f*5 +: 5] == tgt_idx[4:0])) begin
+                  replay_local_match++;
+                  if (u_ff.u_pick.pk_v_n[f])
+                    stat_replay_local_busy++;
+                  else if (prof_stcfl(u_ff.sched_v_f[f*4 +: 4],
+                                      u_ff.pk_v_q[f],
+                                      u_ff.pk_lat_f[f*2 +: 2], replay_cls))
+                    stat_replay_local_sched_block++;
+                  else
+                    stat_replay_local_safe++;
+                end
                 if (!u_ff.u_pick.pk_v_n[f]) begin
                   replay_idle++;
                   if (!prof_stcfl(u_ff.sched_v_f[f*4 +: 4],
@@ -493,6 +531,8 @@ module tb_top;
                     replay_slots++;
                 end
               end
+              chk(replay_local_match == 1,
+                  "E071 predicted target must identify one source FE");
               if (replay_slots != 0) begin
                 stat_replay_safe++;
                 stat_replay_safe_slots += longint'(replay_slots);
@@ -639,6 +679,12 @@ module tb_top;
              stat_replay_safe_slots, stat_replay_safe_lat0,
              stat_replay_safe_lat1, stat_replay_safe_lat2,
              stat_replay_safe_lat3);
+    $display(" E071 same-FE safe/busy/sched-block = %0d/%0d/%0d",
+             stat_replay_local_safe, stat_replay_local_busy,
+             stat_replay_local_sched_block);
+    $display(" E071 actual replay issues = %0d", stat_replay_issued);
+    $display(" E071 replay arms scheduler/lat0 = %0d/%0d",
+             stat_replay_arm_sched, stat_replay_arm_lat0);
     if (errors == 0) $display(" TEST PASSED");
     else             $display(" TEST FAILED with %0d errors", errors);
     $display("==================================================================");
