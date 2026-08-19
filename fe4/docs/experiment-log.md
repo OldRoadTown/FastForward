@@ -93,6 +93,22 @@
   `cycles×period` 相对 E066 约改善 7.26%，但不能替代统一用例 T。
 - E068 更高吞吐可能继续提高单位时间翻转率；在新功耗报告返回前不宣称
   功耗改善，也不使用 cell count 代替活动率功耗。
+- 为确认新增 BKPR 逻辑的收益/代价，另从 E068 建立两个隔离分支。E068A
+  只保留 retirement credit：九个重载 seed 平均 9265.222 cycles（相对
+  E066 -2.889%），三个 DEPHEAVY seed 平均 15120（-0.520%），mid 为
+  10847、60k DEPHEAVY 为 45403；low/nom/high 最大 arrival 代理为
+  0.7850/0.8600/0.9350 ns，总 cells 147721。E068B 只保留 issue credit：
+  重载平均 9402.222（-1.453%），DEPHEAVY 平均 15005（-1.276%），mid
+  为 10841、60k DEPHEAVY 为 45082；arrival 代理为
+  0.7950/0.8675/0.9400 ns，总 cells 148451。
+- 两路 credit 对不同阻塞负载互补：完整 E068 的重载/DEPHEAVY 平均分别
+  为 9052.333/14904.667，均优于任一单路候选。按 nominal arrival 计算，
+  E068A、E068B、完整 E068 的 `cycles×period` 相对 E066 分别约
+  -5.90%、-3.67%、-7.26%；以降低 T 为首要目标时继续保留完整 E068。
+  E068A 是真实 STA 或功耗不通过时的低逻辑量回退候选。
+- 仓库没有提交 `.sdc`、工艺库、真实 STA/功耗脚本，本机也没有 OpenSTA；
+  上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
+  `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
 ## 分支与提交约定
 
@@ -114,5 +130,9 @@
   冗余退休位图，为后续动态 BKPR credit 提供时序余量。
 - `codex/e068-e067-dynamic-bkpr-credit`：从 E067 创建的独立 E068；只用
   本拍实际进度动态释放 credit，固定安全阈值不变。
+- `codex/e068a-retirement-credit-only`：E068 retirement-only 隔离候选；
+  用于真实 STA/功耗不通过时的低逻辑量回退评估。
+- `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
+  完整 E068，仅作为归因与复现实验保留。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
