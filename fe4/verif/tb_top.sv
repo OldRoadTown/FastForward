@@ -20,7 +20,8 @@
 `define REG_FEIN_V 0
 `endif
 `ifndef WAKE_BYPASS_V
-`define WAKE_BYPASS_V 0
+// E069 default: registered latency1..3 prewake, no live wake-to-picker tag path.
+`define WAKE_BYPASS_V 1
 `endif
 `ifndef DUAL_STEAL_V
 `define DUAL_STEAL_V 0
