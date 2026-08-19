@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// RTL revision : 4FE-safe-v72a
+// Experiment   : E072A-R32-completion-spill
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : preserve full packet/target sequence tags for spill routing
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -19,6 +19,7 @@
 module ff_pick #(
   parameter D           = 32,
   parameter AW          = 5,
+  parameter SW          = 6,
   parameter NFE         = 4,
   parameter WAKE_BYPASS = 0,
   parameter DUAL_STEAL  = 0,
@@ -32,17 +33,21 @@ module ff_pick #(
   input  wire [D-1:0]        crit_q,
   input  wire [D*2-1:0]      rob_lat_f,
   input  wire [D*AW-1:0]     rob_tgt_f,
-  input  wire [AW-1:0]       rbase,        // oldest un-issued index
+  input  wire [SW-1:0]       rseq,         // oldest un-issued sequence
   input  wire [NFE*4-1:0]    sched_v_f,    // output-slot booking (ff_sched)
   output wire [D-1:0]        picked,
   output reg  [NFE-1:0]      pk_v_q,       // registered (I0 -> I1)
   output wire [NFE*AW-1:0]   pk_idx_f,
+  output wire [NFE*SW-1:0]   pk_seq_f,     // epoch-qualified result tag
   output wire [NFE*AW-1:0]   pk_tgt_f,     // target index, I0-retimed for I1
+  output wire [NFE*SW-1:0]   pk_tseq_f,    // epoch-qualified dependency tag
   output wire [NFE*2-1:0]    pk_lat_f,
   output wire [NFE*8-1:0]    pk_bank_oh_f,
   output wire [NFE*8-1:0]    pk_local_oh_f,
   output wire [D*2-1:0]      rob_src_f     // FE each entry was issued to
 );
+
+  wire [AW-1:0] rbase = rseq[AW-1:0];
 
   function [3:0] pe8;
     input [7:0] v;
@@ -310,7 +315,9 @@ module ff_pick #(
 
   reg [NFE-1:0] pk_v_int;
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
+  reg [SW-1:0]  pk_seq_q [0:NFE-1];
   reg [AW-1:0]  pk_tgt_q [0:NFE-1];
+  reg [SW-1:0]  pk_tseq_q [0:NFE-1];
   reg [1:0]     pk_lat_q [0:NFE-1];
   reg [7:0]     pk_bank_oh_q [0:NFE-1];
   reg [7:0]     pk_local_oh_q [0:NFE-1];
@@ -499,7 +506,9 @@ module ff_pick #(
   // -------------------------------------------------------------------------
   reg [NFE-1:0] pk_v_n;
   reg [AW-1:0] pk_idx_n [0:NFE-1];
+  reg [SW-1:0] pk_seq_n [0:NFE-1];
   reg [AW-1:0] pk_tgt_n [0:NFE-1];
+  reg [SW-1:0] pk_tseq_n [0:NFE-1];
   reg [1:0]    pk_lat_n [0:NFE-1];
   reg [7:0]    pk_bank_oh_n [0:NFE-1];
   reg [7:0]    pk_local_oh_n [0:NFE-1];
@@ -519,6 +528,19 @@ module ff_pick #(
         pk_idx_n[f] = st2_didx;
         pk_lat_n[f] = st2_dc;
       end
+    end
+  end
+
+  // The active unissued window is strictly smaller than D, so the selected
+  // physical index and old-u epoch uniquely reconstruct the logical sequence.
+  // This cone only feeds the tag register; it is not part of candidate choice.
+  always @* begin
+    for (f = 0; f < NFE; f = f + 1) begin
+      pk_seq_n[f] = {rseq[SW-1], pk_idx_n[f]};
+      if (pk_idx_n[f] < rbase) pk_seq_n[f][SW-1] = ~rseq[SW-1];
+      pk_tseq_n[f] = {pk_seq_n[f][SW-1], pk_tgt_n[f]};
+      if (pk_tgt_n[f] > pk_idx_n[f])
+        pk_tseq_n[f][SW-1] = ~pk_seq_n[f][SW-1];
     end
   end
 
@@ -600,10 +622,12 @@ module ff_pick #(
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1) begin
       pk_idx_q[f] <= pk_idx_n[f];
+      pk_seq_q[f] <= pk_seq_n[f];
       // Retiming the dependency target across the existing I0/I1 boundary
       // removes pk_idx_q -> rob_tgt[32:1] from the FE input cycle.  This is
       // unconditional so the picker cone cannot become an ICG-enable path.
       pk_tgt_q[f] <= pk_tgt_n[f];
+      pk_tseq_q[f] <= pk_tseq_n[f];
       pk_lat_q[f] <= pk_lat_n[f];
       pk_bank_oh_q[f] <= pk_bank_oh_n[f];
       pk_local_oh_q[f] <= pk_local_oh_n[f];
@@ -625,7 +649,9 @@ module ff_pick #(
   generate
     for (gf = 0; gf < NFE; gf = gf + 1) begin : g_ex
       assign pk_idx_f[gf*AW +: AW] = pk_idx_q[gf];
+      assign pk_seq_f[gf*SW +: SW] = pk_seq_q[gf];
       assign pk_tgt_f[gf*AW +: AW] = pk_tgt_q[gf];
+      assign pk_tseq_f[gf*SW +: SW] = pk_tseq_q[gf];
       assign pk_lat_f[gf*2 +: 2]   = pk_lat_q[gf];
       assign pk_bank_oh_f[gf*8 +: 8]  = pk_bank_oh_q[gf];
       assign pk_local_oh_f[gf*8 +: 8] = pk_local_oh_q[gf];

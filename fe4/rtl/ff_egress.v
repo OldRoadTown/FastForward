@@ -1,30 +1,28 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : export the natural retirement thermometer as BKPR credit
+// RTL revision : 4FE-safe-v72a
+// Experiment   : E072A-R32-completion-spill
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : retire physical/spill results without a tag compare in pop path
 //
-// Pops up to 4 contiguous completed entries starting at out_seq, output lane
-// = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
-// arriving in this cycle may pop through the FEOUT bypass. PKTOUT is registered.
+// Pops up to 4 contiguous stored-complete entries starting at out_seq, output
+// lane = seq[1:0]. Results retire only after their ROB/spill write edge, which
+// keeps completion routing off the pop -> out_seq critical path.
 // =============================================================================
 module ff_egress #(
   parameter D   = 32,
   parameter AW  = 5,
-  parameter SW  = 6,
-  parameter NFE = 4
+  parameter SW  = 6
 )(
   input  wire                clk,
   input  wire                rst_n,
   input  wire [SW-1:0]       alloc_seq,
   input  wire [SW-1:0]       out_seq,
   input  wire [D-1:0]        resv_q,
-  input  wire [D-1:0]        res_now,
+  input  wire [3:0]          spill_resv,
+  input  wire [4*128-1:0]    spill_data_f,
   input  wire [D*128-1:0]    rob_data_f,
-  input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
-  input  wire [NFE*128-1:0]  fe_od_f,
   output reg  [2:0]          pop_cnt,
   output wire [3:0]          pop_therm,
   output reg  [3:0]          lane_v,        // registered PKTOUT valids
@@ -33,35 +31,56 @@ module ff_egress #(
 
   // unpack
   wire [127:0] rob_data [0:D-1];
-  wire [1:0]   rob_src  [0:D-1];
-  wire [127:0] fe_od    [0:NFE-1];
+  wire [127:0] spill_data [0:3];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
       assign rob_data[gi] = rob_data_f[gi*128 +: 128];
-      assign rob_src[gi]  = rob_src_f[gi*2 +: 2];
     end
-    for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uo
-      assign fe_od[gi] = fe_od_f[gi*128 +: 128];
+    for (gi = 0; gi < 4; gi = gi + 1) begin : g_us
+      assign spill_data[gi] = spill_data_f[gi*128 +: 128];
     end
   endgenerate
 
-  // Same-cycle result bypass remains part of the completion check.
-  wire [D-1:0] cmpl = resv_q | res_now;
+  wire [D-1:0] cmpl = resv_q;
+  wire [SW-1:0] live_cnt = alloc_seq - out_seq;
 
-  wire [AW-1:0] oidx0 = out_seq[AW-1:0];
-  wire [AW-1:0] oidx1 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd1};
-  wire [AW-1:0] oidx2 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd2};
-  wire [AW-1:0] oidx3 = out_seq[AW-1:0] + {{(AW-2){1'b0}}, 2'd3};
+  wire [SW-1:0] oseq [0:3];
+  wire [AW-1:0] oidx [0:3];
+  wire [3:0] spill_head;
+  wire live_gt32 = live_cnt[5] & (|live_cnt[4:0]);
+  wire live_gt33 = live_cnt[5] & (|live_cnt[4:1]);
+  wire live_gt34 = live_cnt[5]
+                   & ((|live_cnt[4:2]) | (&live_cnt[1:0]));
+  wire live_gt35 = live_cnt[5] & (|live_cnt[4:2]);
+  assign spill_head = {live_gt35, live_gt34, live_gt33, live_gt32};
+  genvar go;
+  generate
+    for (go = 0; go < 4; go = go + 1) begin : g_head
+      assign oseq[go] = out_seq + go[SW-1:0];
+      assign oidx[go] = oseq[go][AW-1:0];
+      // The spill always holds the four sequences immediately behind the
+      // newest 32 physical residents. Therefore a retirement candidate is in
+      // spill exactly when more than D+go live entries remain; no tag compare
+      // is needed on the pop/out-sequence critical path.
+    end
+  endgenerate
   // out_seq always identifies the first not-yet-retired sequence. Once an
   // entry retires, the head advances at the same edge, so a separate popped
   // bitmap and its 3-to-32 feedback decode are redundant.  The live count
   // qualifies retained result bits after the ROB becomes empty or wraps.
-  wire [SW-1:0] live_cnt = alloc_seq - out_seq;
-  wire can0 = (live_cnt > 0) && cmpl[oidx0];
-  wire can1 = (live_cnt > 1) && cmpl[oidx1];
-  wire can2 = (live_cnt > 2) && cmpl[oidx2];
-  wire can3 = (live_cnt > 3) && cmpl[oidx3];
+  wire can0 = (live_cnt > 0)
+              && (spill_head[0] ? spill_resv[oseq[0][1:0]]
+                               : cmpl[oidx[0]]);
+  wire can1 = (live_cnt > 1)
+              && (spill_head[1] ? spill_resv[oseq[1][1:0]]
+                               : cmpl[oidx[1]]);
+  wire can2 = (live_cnt > 2)
+              && (spill_head[2] ? spill_resv[oseq[2][1:0]]
+                               : cmpl[oidx[2]]);
+  wire can3 = (live_cnt > 3)
+              && (spill_head[3] ? spill_resv[oseq[3][1:0]]
+                               : cmpl[oidx[3]]);
 
   // Contiguous retirement already forms a thermometer code. Export it so
   // ROB backpressure can consume same-edge progress without re-encoding the
@@ -85,19 +104,24 @@ module ff_egress #(
     end
   end
 
-  // lane mapping + same-cycle result data mux
+  // lane mapping + physical/spill stored-data mux
   reg [3:0]    out_act;
   reg [127:0]  out_dat [0:3];
   integer l;
   reg [1:0]     kl;
   reg [AW-1:0]  osrc, osi;
+  reg [SW-1:0]  oseq_l;
   always @* begin
     for (l = 0; l < 4; l = l + 1) begin
       kl         = l[1:0] - out_seq[1:0];
       out_act[l] = ({1'b0, kl} < pop_cnt);
       osrc       = out_seq[AW-1:0] + {{(AW-2){1'b0}}, kl};
       osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
-      out_dat[l] = res_now[osi] ? fe_od[rob_src[osi]] : rob_data[osi];
+      oseq_l     = out_seq + {{(SW-2){1'b0}}, kl};
+      if (spill_head[kl])
+        out_dat[l] = spill_data[oseq_l[1:0]];
+      else
+        out_dat[l] = rob_data[osi];
     end
   end
 
@@ -109,7 +133,7 @@ module ff_egress #(
   always @(posedge clk) begin
     for (l = 0; l < 4; l = l + 1)
       // lane_v qualifies lane_d_f.  Always writing the data removes the
-      // sched_idx/res_now -> out_act -> lane_d clock-gate enable path.
+      // completion routing -> out_act -> lane_d clock-gate enable path.
       lane_d_f[l*128 +: 128] <= out_dat[l];
   end
 

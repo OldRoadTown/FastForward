@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v72a
+// Experiment   : E072A-R32-completion-spill
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : retain up to four overwritten issued entries in completion spill
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -34,9 +34,12 @@ module ff_rob #(
   input  wire [4*AW-1:0]     k_tgt_f,       // their targets (critical mark)
   // FE tracking / results
   input  wire [NFE-1:0]      exit_v,
-  input  wire [NFE*AW-1:0]   exit_idx_f,
+  input  wire [NFE-1:0]      exit_phys,
+  input  wire [NFE*SW-1:0]   exit_idx_f,
   input  wire [NFE-1:0]      pre_v,
-  input  wire [NFE*AW-1:0]   pre_idx_f,
+  input  wire [NFE-1:0]      pre_phys,
+  input  wire [NFE*SW-1:0]   pre_idx_f,
+  input  wire [D-1:0]        pre_fast_oh,
   input  wire [NFE*128-1:0]  fe_od_f,
   // pick / egress feedback
   input  wire [D-1:0]        picked,
@@ -46,11 +49,15 @@ module ff_rob #(
   // state exports
   output wire [D-1:0]        res_now_o,
   output wire [D-1:0]        res_pred_o,
-  output wire [D-1:0]        res_known_o,   // resv | res_now | res_pred
+  output wire [D-1:0]        res_known_o,   // stored or actually returning phys result
   output wire [D-1:0]        wake_now_o,
   output wire [D-1:0]        rdy_o,
   output wire [D-1:0]        crit_o,
   output wire [D-1:0]        resv_o,
+  output wire [3:0]          spill_v_o,
+  output wire [3:0]          spill_resv_o,
+  output wire [4*SW-1:0]     spill_seq_f,
+  output wire [4*128-1:0]    spill_data_f,
   output wire [D*128-1:0]    rob_data_f,
   output wire [D*2-1:0]      rob_lat_f,
   output wire [D*AW-1:0]     rob_tgt_f,
@@ -63,14 +70,15 @@ module ff_rob #(
 
   // BKPR thresholds (2 cycles / up to 8 packets of unaccounted in-flight
   // input between the combinational decision and the throttle taking effect):
-  //  * occupancy   : entry reuse (seq n overwrites n-32):  (D-1)-8      = 23
-  //  * issue window: a packet may depend on any of the preceding 7 entries.
-  //    Before allocating sequence n, every entry through n-D+7 must therefore
-  //    have issued.  With old_u denoting the first unissued sequence, this is
-  //    equivalent to alloc_nxt-old_u <= D-7.  Reserve 8 additional packets
-  //    for the documented two-cycle BKPR response, giving D-7-8 = 17.
-  localparam [SW-1:0] OCC_TH = 23;
-  localparam [SW-1:0] WIN_TH = 17;
+  //  * occupancy   : 32 physical entries + four completion spill slots,
+  //                  minus one empty-slot guard and eight in-flight packets
+  //                  gives a post-progress decision threshold of 27.
+  //  * issue window: the spill extends retained dependency results from 32 to
+  //    36 sequences. A packet may depend on the preceding 7 entries, so the
+  //    post-flight safe span is 36-7=29. Reserving eight packets for the
+  //    documented two-cycle BKPR response gives 29-8=21.
+  localparam [SW-1:0] OCC_TH = 27;
+  localparam [SW-1:0] WIN_TH = 21;
 
   function [3:0] pe8;
     input [7:0] v;
@@ -155,8 +163,8 @@ module ff_rob #(
   wire [AW-1:0] slot_tgt [0:3];
   wire [AW-1:0] k_tgt   [0:3];
   wire [1:0]    rob_src [0:D-1];
-  wire [AW-1:0] exit_idx [0:NFE-1];
-  wire [AW-1:0] pre_idx  [0:NFE-1];
+  wire [SW-1:0] exit_seq [0:NFE-1];
+  wire [SW-1:0] pre_seq  [0:NFE-1];
   wire [127:0]  fe_od    [0:NFE-1];
   genvar gi;
   generate
@@ -172,8 +180,8 @@ module ff_rob #(
       assign rob_src[gi] = rob_src_f[gi*2 +: 2];
     end
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uf
-      assign exit_idx[gi] = exit_idx_f[gi*AW +: AW];
-      assign pre_idx[gi]  = pre_idx_f[gi*AW +: AW];
+      assign exit_seq[gi] = exit_idx_f[gi*SW +: SW];
+      assign pre_seq[gi]  = pre_idx_f[gi*SW +: SW];
       assign fe_od[gi]    = fe_od_f[gi*128 +: 128];
     end
   endgenerate
@@ -185,12 +193,23 @@ module ff_rob #(
   reg [1:0]    rob_lat   [0:D-1];
   reg [AW-1:0] rob_tgt   [0:D-1];
   reg          rob_isdep [0:D-1];
+  reg [D-1:0]  rob_epoch;                // sequence epoch of physical resident
+  reg [D-1:0]  rob_alloc_v;              // physical slot has a resident history
 
   reg [D-1:0]  crit_q;                  // some dependent is waiting on this
   reg [D-1:0]  rdy_q;                   // ready, not yet picked
   reg [D-1:0]  wtg_q;                   // waiting for dependency result
   reg [D-1:0]  iss_q;                   // picked/issued
   reg [D-1:0]  resv_q;                  // result present (retained after pop)
+
+  // When occupancy exceeds 32, the overwritten entries are necessarily the
+  // oldest one to four live sequences. Sequence[1:0] is therefore a collision-
+  // free direct index into this tiny completion-only spill.
+  reg [3:0]    spill_v_q;
+  reg [3:0]    spill_resv_q;
+  reg [SW-1:0] spill_seq [0:3];
+  reg [127:0]  spill_data [0:3];
+  reg [D-1:0]  spill_wait_idx_q;
 
   reg [SW-1:0] alloc_seq_q;
   reg [SW-1:0] out_seq_q;
@@ -203,20 +222,48 @@ module ff_rob #(
   integer f;
   always @* begin
     res_now_r  = {D{1'b0}};
-    res_pred_r = {D{1'b0}};
+    res_pred_r = pre_fast_oh & ~spill_wait_idx_q;
     for (f = 0; f < NFE; f = f + 1) begin
-      if (exit_v[f]) res_now_r[exit_idx[f]]  = 1'b1;
-      if (pre_v[f])  res_pred_r[pre_idx[f]]  = 1'b1;
+      if (exit_v[f] && exit_phys[f])
+        res_now_r[exit_seq[f][AW-1:0]] = 1'b1;
+      if (pre_v[f] && pre_phys[f])
+        if (!spill_wait_idx_q[pre_seq[f][AW-1:0]])
+          res_pred_r[pre_seq[f][AW-1:0]] = 1'b1;
     end
   end
 
   // pre-wake: target result arrives next cycle -> dependent can enter the FE
   // in the same cycle the result shows up on FEOUT (dp taken from the bus)
   reg [D-1:0] wake_now;
+  reg [SW-1:0] wake_tgt_seq;
+  reg wake_tgt_spill;
+  reg [D-1:0] spill_wait_idx_n;
   integer e;
   always @* begin
-    for (e = 0; e < D; e = e + 1)
-      wake_now[e] = wtg_q[e] & res_pred_r[rob_tgt[e]];
+    wake_tgt_seq = {SW{1'b0}};
+    wake_tgt_spill = 1'b0;
+    spill_wait_idx_n = {D{1'b0}};
+    for (e = 0; e < D; e = e + 1) begin
+      wake_tgt_seq = {rob_epoch[e], rob_tgt[e]};
+      if (rob_tgt[e] > e[AW-1:0])
+        wake_tgt_seq[SW-1] = ~rob_epoch[e];
+      wake_tgt_spill = spill_v_q[wake_tgt_seq[1:0]]
+                       && spill_resv_q[wake_tgt_seq[1:0]]
+                       && (spill_seq[wake_tgt_seq[1:0]] == wake_tgt_seq);
+      if (wtg_q[e] && spill_v_q[wake_tgt_seq[1:0]]
+          && (spill_seq[wake_tgt_seq[1:0]] == wake_tgt_seq))
+        spill_wait_idx_n[rob_tgt[e]] = 1'b1;
+      wake_now[e] = wtg_q[e]
+                    & (res_pred_r[rob_tgt[e]]
+                       | (resv_q[rob_tgt[e]]
+                          & ~spill_wait_idx_q[rob_tgt[e]])
+                       | wake_tgt_spill);
+    end
+  end
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) spill_wait_idx_q <= {D{1'b0}};
+    else        spill_wait_idx_q <= spill_wait_idx_n;
   end
 
   // -------------------------------------------------------------------------
@@ -228,11 +275,15 @@ module ff_rob #(
   reg [SW-1:0] first_seq;
   reg          take_first;
   wire [D-1:0] iss_eff = iss_q | picked;
+  // Keep the old-u search copy local.  Sharing these terms with the dynamic
+  // BKPR-credit comparators makes ABC optimize for area across two endpoints
+  // and has previously added a gate level to the picked -> old_u path.
+  (* keep *) wire [D-1:0] old_u_iss_eff = iss_q | picked;
   always @* begin
     // picked is now the registered issue/commit bitmap.  Include it in the
     // look-ahead so delaying the ROB state write until issue does not add an
     // extra cycle to oldest-unissued pointer advancement.
-    first_niss = peH(~iss_eff, old_u_q[AW-1:0]);
+    first_niss = peH(~old_u_iss_eff, old_u_q[AW-1:0]);
     first_dist = first_niss[AW-1:0] - old_u_q[AW-1:0];
     dist_f     = alloc_seq_q - old_u_q;
     // Reconstruct the 6-bit sequence number directly from the selected
@@ -283,7 +334,7 @@ module ff_rob #(
   // Convert each thermometer to a one-hot count (0..4), then select fixed
   // threshold comparisons in parallel. The effective raw thresholds rise by
   // actual same-edge progress, while the post-progress safety limits remain
-  // OCC_TH=23 and WIN_TH=17.
+  // OCC_TH=27 and WIN_TH=21.
   wire [4:0] pop_count_oh = { pop_therm[3],
                               pop_therm[2] & ~pop_therm[3],
                               pop_therm[1] & ~pop_therm[2],
@@ -295,31 +346,30 @@ module ff_rob #(
                               adv_therm[0] & ~adv_therm[1],
                              ~adv_therm[0] };
 
-  wire occ_gt23 = occ[5] | (occ[4] & occ[3]);
-  wire occ_gt24 = occ[5] | (occ[4] & occ[3] & (|occ[2:0]));
-  wire occ_gt25 = occ[5] | (occ[4] & occ[3] & (occ[2] | occ[1]));
-  wire occ_gt26 = occ[5] | (occ[4] & occ[3]
-                            & (occ[2] | (occ[1] & occ[0])));
   wire occ_gt27 = occ[5] | (&occ[4:2]);
-  wire occ_over = (pop_count_oh[0] & occ_gt23)
-                | (pop_count_oh[1] & occ_gt24)
-                | (pop_count_oh[2] & occ_gt25)
-                | (pop_count_oh[3] & occ_gt26)
-                | (pop_count_oh[4] & occ_gt27);
+  wire occ_gt28 = occ[5] | ((&occ[4:2]) & (occ[1] | occ[0]));
+  wire occ_gt29 = occ[5] | ((&occ[4:2]) & occ[1]);
+  wire occ_gt30 = occ[5] | (&occ[4:0]);
+  wire occ_gt31 = occ[5];
+  wire occ_over = (pop_count_oh[0] & occ_gt27)
+                | (pop_count_oh[1] & occ_gt28)
+                | (pop_count_oh[2] & occ_gt29)
+                | (pop_count_oh[3] & occ_gt30)
+                | (pop_count_oh[4] & occ_gt31);
 
-  wire win_gt17 = win[5] | (win[4] & (|win[3:1]));
-  wire win_gt18 = win[5] | (win[4]
-                            & (win[3] | win[2] | (win[1] & win[0])));
-  wire win_gt19 = win[5] | (win[4] & (win[3] | win[2]));
-  wire win_gt20 = win[5] | (win[4]
-                            & (win[3] | (win[2] & (win[1] | win[0]))));
   wire win_gt21 = win[5] | (win[4]
                             & (win[3] | (win[2] & win[1])));
-  wire win_over = (adv_count_oh[0] & win_gt17)
-                | (adv_count_oh[1] & win_gt18)
-                | (adv_count_oh[2] & win_gt19)
-                | (adv_count_oh[3] & win_gt20)
-                | (adv_count_oh[4] & win_gt21);
+  wire win_gt22 = win[5] | (win[4]
+                            & (win[3] | (&win[2:0])));
+  wire win_gt23 = win[5] | (win[4] & win[3]);
+  wire win_gt24 = win[5] | (win[4] & win[3] & (|win[2:0]));
+  wire win_gt25 = win[5] | (win[4] & win[3]
+                            & (win[2] | win[1]));
+  wire win_over = (adv_count_oh[0] & win_gt21)
+                | (adv_count_oh[1] & win_gt22)
+                | (adv_count_oh[2] & win_gt23)
+                | (adv_count_oh[3] & win_gt24)
+                | (adv_count_oh[4] & win_gt25);
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) bkpr_r <= 1'b0;
@@ -343,7 +393,7 @@ module ff_rob #(
                           + {2'b0, pop_therm[2]}
                           + {2'b0, pop_therm[3]};
   always @(posedge clk) begin
-    if (rst_n && (reuse_span_n > (D-7)))
+    if (rst_n && (reuse_span_n > (D+4-7)))
       $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
     if (rst_n && ({{(SW-3){1'b0}}, adv_credit_n} > old_u_adv_n))
       $error("[ff_rob] issue credit exceeds old-u advance @%0t", $time);
@@ -368,6 +418,71 @@ module ff_rob #(
     else        crit_q <= crit_n;
   end
 
+  // -------------------------------------------------------------------------
+  // four-entry issued-completion spill
+  // -------------------------------------------------------------------------
+  reg [3:0] spill_create, spill_create_done, spill_hit_now;
+  reg [SW-1:0] spill_create_seq [0:3];
+  reg [127:0] spill_create_data [0:3];
+  reg [127:0] spill_hit_data [0:3];
+  integer sc, sf, se;
+  always @* begin
+    spill_create      = 4'b0;
+    spill_create_done = 4'b0;
+    spill_hit_now     = 4'b0;
+    for (sc = 0; sc < 4; sc = sc + 1) begin
+      spill_create_seq[sc]  = {SW{1'b0}};
+      spill_create_data[sc] = 128'b0;
+      spill_hit_data[sc]    = 128'b0;
+
+      // An already-spilled result is routed by its full logical tag. This
+      // keeps a returning old epoch from corrupting the new physical resident.
+      for (sf = 0; sf < NFE; sf = sf + 1)
+        if (spill_v_q[sc] && exit_v[sf]
+            && (exit_seq[sf] == spill_seq[sc])) begin
+          spill_hit_now[sc]  = 1'b1;
+          spill_hit_data[sc] = fe_od[sf];
+        end
+      // Every physical replacement shifts the displaced issued/result entry
+      // into the tail. Low sequence bits are unchanged by +/-32, so spill sc
+      // only selects among the eight fixed physical rows with index[1:0]=sc.
+      // Expressing that topology explicitly avoids a synthesized 32x4 dynamic
+      // crossbar on all 128 data bits.
+      for (se = 0; se < D; se = se + 1)
+        if ((se[1:0] == sc[1:0]) && alloc_oh[se] && rob_alloc_v[se]) begin
+          spill_create[sc]      = 1'b1;
+          spill_create_seq[sc]  = {rob_epoch[se], se[AW-1:0]};
+          spill_create_done[sc] = resv_q[se];
+          spill_create_data[sc] = rob_data[se];
+        end
+      for (sf = 0; sf < NFE; sf = sf + 1)
+        if (spill_create[sc] && exit_v[sf]
+            && (exit_seq[sf] == spill_create_seq[sc])) begin
+          spill_create_done[sc] = 1'b1;
+          spill_create_data[sc] = fe_od[sf];
+        end
+    end
+  end
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      spill_v_q    <= 4'b0;
+      spill_resv_q <= 4'b0;
+    end else begin
+      for (sc = 0; sc < 4; sc = sc + 1) begin
+        if (spill_create[sc]) begin
+          spill_v_q[sc]    <= 1'b1;
+          spill_resv_q[sc] <= spill_create_done[sc];
+          spill_seq[sc]    <= spill_create_seq[sc];
+          spill_data[sc]   <= spill_create_data[sc];
+        end else if (spill_hit_now[sc]) begin
+          spill_resv_q[sc] <= 1'b1;
+          spill_data[sc]   <= spill_hit_data[sc];
+        end
+      end
+    end
+  end
+
 `ifndef SYNTHESIS
   // out_seq_q is the first not-yet-retired sequence and advances by pop_cnt
   // on every retirement edge.  It therefore prevents a physical entry from
@@ -389,6 +504,8 @@ module ff_rob #(
       wtg_q       <= {D{1'b0}};
       iss_q       <= {D{1'b0}};
       resv_q      <= {D{1'b0}};
+      rob_epoch   <= {D{1'b0}};
+      rob_alloc_v <= {D{1'b0}};
       alloc_seq_q <= {SW{1'b0}};
       out_seq_q   <= {SW{1'b0}};
       old_u_q     <= {SW{1'b0}};
@@ -399,6 +516,9 @@ module ff_rob #(
           wtg_q[e]  <= slot_wtg[e[1:0]];
           iss_q[e]  <= 1'b0;
           resv_q[e] <= 1'b0;
+          rob_epoch[e] <= alloc_seq_q[SW-1]
+                          ^ (e[AW-1:0] < alloc_seq_q[AW-1:0]);
+          rob_alloc_v[e] <= 1'b1;
         end else begin
           if (picked[e]) begin
             rdy_q[e] <= 1'b0;
@@ -440,15 +560,24 @@ module ff_rob #(
       assign rob_tgt_f[gi*AW +: AW]    = rob_tgt[gi];
       assign rob_isdep_o[gi]           = rob_isdep[gi];
     end
+    for (gi = 0; gi < 4; gi = gi + 1) begin : g_spill_ex
+      assign spill_seq_f[gi*SW +: SW]     = spill_seq[gi];
+      assign spill_data_f[gi*128 +: 128]  = spill_data[gi];
+    end
   endgenerate
 
   assign res_now_o   = res_now_r;
   assign res_pred_o  = res_pred_r;
-  assign res_known_o = resv_q | res_now_r | res_pred_r;
+  // Prediction remains local to waiting-entry wake. New ingress dependencies
+  // may consume a result that actually returns this cycle, but never a
+  // speculative pre-tag; the value is written before the new packet issues.
+  assign res_known_o = resv_q | res_now_r;
   assign wake_now_o  = wake_now;
   assign rdy_o       = rdy_q;
   assign crit_o      = crit_q;
   assign resv_o      = resv_q;
+  assign spill_v_o   = spill_v_q;
+  assign spill_resv_o = spill_resv_q;
   assign alloc_seq_o = alloc_seq_q;
   assign out_seq_o   = out_seq_q;
   assign old_u_o     = old_u_q;

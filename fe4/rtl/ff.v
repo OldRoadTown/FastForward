@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v72a
+// Experiment   : E072A-R32-completion-spill
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : add four issued-completion spill slots behind the 32-entry IQ
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -16,8 +16,8 @@
 // Top level flattens/unflattens ports and instantiates the stages:
 //   ff_ingress  S0/S1: PKTIN registers, compaction, dependency resolve, alloc
 //               (+ critical-target marking info)
-//   ff_rob      ROB storage/state (+critical flags), wake-up, counters,
-//               oldest pointer, BKPR
+//   ff_rob      32-entry issue storage + four completion spill slots,
+//               wake-up, counters, oldest pointer, BKPR
 //   ff_pick     I0: per-class dual pick (parity PEs) + critical-first
 //               priority + work stealing (<=2/cycle) + rob_src record
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
@@ -27,7 +27,7 @@
 //
 // Architecture summary (details in docs/design_spec.md):
 //   4 FEs, primary latency-class binding + work stealing with exact
-//   output-slot bookkeeping, 32-entry unified-storage ROB, out-of-order
+//   output-slot bookkeeping, 32-entry issue storage + 4-entry completion spill,
 //   issue / in-order output, pre-wake (dependent enters the FE in the same
 //   cycle its target result appears on FEOUT), critical-first pick,
 //   retained results + dual BKPR windows.
@@ -119,17 +119,21 @@ module ff #(
   wire [D-1:0]        picked;
   wire [NFE-1:0]      pk_v_q;
   wire [NFE*AW-1:0]   pk_idx_f;
+  wire [NFE*SW-1:0]   pk_seq_f;
   wire [NFE*AW-1:0]   pk_tgt_f;
+  wire [NFE*SW-1:0]   pk_tseq_f;
   wire [NFE*2-1:0]    pk_lat_f;
   wire [NFE*8-1:0]    pk_bank_oh_f;
   wire [NFE*8-1:0]    pk_local_oh_f;
   wire [D*2-1:0]      rob_src_f;
 
   wire [NFE-1:0]      issue_v;
-  wire [NFE*AW-1:0]   issue_idx_f;
+  wire [NFE*SW-1:0]   issue_idx_f;
+  wire [NFE*D-1:0]    issue_oh_f;
   wire [NFE*2-1:0]    issue_lat_f;
-  wire [NFE-1:0]      exit_v, pre_v;
-  wire [NFE*AW-1:0]   exit_idx_f, pre_idx_f;
+  wire [NFE-1:0]      exit_v, exit_phys, pre_v, pre_phys;
+  wire [NFE*SW-1:0]   exit_idx_f, pre_idx_f;
+  wire [D-1:0]        pre_fast_oh;
   wire [NFE*4-1:0]    sched_v_f;
 
   wire [NFE-1:0]      fwd_v, fwd_dpv;
@@ -138,6 +142,9 @@ module ff #(
 
   wire [2:0]          pop_cnt;
   wire [3:0]          pop_therm;
+  wire [3:0]          spill_v, spill_resv;
+  wire [4*SW-1:0]     spill_seq_f;
+  wire [4*128-1:0]    spill_data_f;
   wire [3:0]          lane_v;
   wire [511:0]        lane_d_f;
 
@@ -161,52 +168,64 @@ module ff #(
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
     .slot_rdy(slot_rdy), .slot_wtg(slot_wtg), .slot_isdep(slot_isdep),
     .kw_vld(kw_vld), .k_tgt_f(k_tgt_f),
-    .exit_v(exit_v), .exit_idx_f(exit_idx_f),
-    .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .exit_v(exit_v), .exit_phys(exit_phys), .exit_idx_f(exit_idx_f),
+    .pre_v(pre_v), .pre_phys(pre_phys),
+    .pre_idx_f(pre_idx_f), .pre_fast_oh(pre_fast_oh),
     .fe_od_f(fe_od_f),
     .picked(picked), .rob_src_f(rob_src_f),
     .pop_cnt(pop_cnt), .pop_therm(pop_therm),
     .res_now_o(res_now), .res_pred_o(res_pred), .res_known_o(res_known),
     .wake_now_o(wake_now), .rdy_o(rdy_q), .crit_o(crit_q),
     .resv_o(resv_q),
+    .spill_v_o(spill_v), .spill_resv_o(spill_resv),
+    .spill_seq_f(spill_seq_f), .spill_data_f(spill_data_f),
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
     .bkpr_r(pkt_in_bkpr)
   );
 
-  ff_pick #(.D(D), .AW(AW), .NFE(NFE),
+  ff_pick #(.D(D), .AW(AW), .SW(SW), .NFE(NFE),
             .WAKE_BYPASS(WAKE_BYPASS), .REG_FEIN(REG_FEIN),
             .DUAL_STEAL(DUAL_STEAL)) u_pick (
     .clk(clk), .rst_n(rst_n),
     .rdy_q(rdy_q), .wake_now(wake_now), .crit_q(crit_q),
     .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
-    .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
+    .rseq(old_u), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
-    .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_idx_f(pk_idx_f), .pk_seq_f(pk_seq_f), .pk_tgt_f(pk_tgt_f),
+    .pk_tseq_f(pk_tseq_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f), .rob_src_f(rob_src_f)
   );
 
-  ff_issue #(.D(D), .AW(AW), .NFE(NFE), .REG_FEIN(REG_FEIN),
+  ff_issue #(.D(D), .AW(AW), .SW(SW), .NFE(NFE), .REG_FEIN(REG_FEIN),
              .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
-    .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_seq_f(pk_seq_f),
+    .pk_tgt_f(pk_tgt_f), .pk_tseq_f(pk_tseq_f),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f),
-    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),
+    .rob_data_f(rob_data_f),
     .rob_isdep(rob_isdep),
-    .res_now(res_now), .fe_od_f(fe_od_f),
+    .spill_v(spill_v), .spill_resv(spill_resv),
+    .spill_seq_f(spill_seq_f), .spill_data_f(spill_data_f),
+    .exit_v(exit_v), .exit_idx_f(exit_idx_f),
+    .fe_od_f(fe_od_f),
     .fwd_v(fwd_v), .fwd_d_f(fwd_d_f), .fwd_l_f(fwd_l_f),
     .fwd_dpv(fwd_dpv), .fwd_dpd_f(fwd_dpd_f),
-    .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_lat_f(issue_lat_f)
+    .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_oh_f(issue_oh_f),
+    .issue_lat_f(issue_lat_f)
   );
 
-  ff_sched #(.AW(AW), .NFE(NFE)) u_sched (
+  ff_sched #(.AW(SW), .PW(AW), .D(D), .NFE(NFE)) u_sched (
     .clk(clk), .rst_n(rst_n),
-    .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_lat_f(issue_lat_f),
-    .exit_v(exit_v), .exit_idx_f(exit_idx_f),
-    .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_oh_f(issue_oh_f),
+    .issue_lat_f(issue_lat_f),
+    .alloc_oh(alloc_oh),
+    .exit_v(exit_v), .exit_phys(exit_phys), .exit_idx_f(exit_idx_f),
+    .pre_v(pre_v), .pre_phys(pre_phys),
+    .pre_idx_f(pre_idx_f), .pre_fast_oh(pre_fast_oh),
     .sched_v_f(sched_v_f)
   );
 
@@ -257,11 +276,12 @@ module ff #(
     .fwded_pkt_data(fwded3_pkt_data)
   );
 
-  ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_egress (
+  ff_egress #(.D(D), .AW(AW), .SW(SW)) u_egress (
     .clk(clk), .rst_n(rst_n),
     .alloc_seq(alloc_seq), .out_seq(out_seq),
-    .resv_q(resv_q), .res_now(res_now),
-    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
+    .resv_q(resv_q),
+    .spill_resv(spill_resv), .spill_data_f(spill_data_f),
+    .rob_data_f(rob_data_f),
     .pop_cnt(pop_cnt), .pop_therm(pop_therm),
     .lane_v(lane_v), .lane_d_f(lane_d_f)
   );
