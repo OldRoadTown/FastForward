@@ -32,6 +32,7 @@
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-stored-tail-credit | 0 | 0 | 0 | E070C；扩展项只读取寄存 iss_q，隔离 picked 扇出 |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E070C | `d95a825af9cfed2c433c49b2ac499b96cee0ccb9` | rob32-stored-tail-credit | 9041 | 10660 | 24907 | — | — | — | 148290† | — | — | — | 前四项保留 E068 `iss_eff`，第五、六项仅使用已寄存 `iss_q`，不增加 picked 消费者；23/17 阈值不变。heavy 九 seed 平均 9012，相对 E068 -0.446%；DEPHEAVY -0.197%，mid -0.066%，60k -0.132%，sparse 不变，dual/full seed7 为 8988/7912。low/nom/high 最大 arrival 与近临界端点数量均不劣于 E068，但代理关键路径身份转为 `picked → old_u_n`，真实 STA/Power/统一 T 待测。 |
 
 ### E066 基线与否决记录
 
@@ -137,6 +139,27 @@
   数据或 `exit_idx → out_seq` 路径。若真实 STA 不劣于 E068 且 cycles
   有稳定收益，再考虑比现有 dual-steal 更简单的单路寄存式偷取。
 
+### E070C stored-tail credit 候选记录
+
+- E070B 的时序恶化来自扩展项继续读取 `iss_eff=iss_q|picked`。E070C
+  保留前四项的原始逻辑，第五、六项只承认此前已经寄存的 `iss_q`；因此
+  credit 仍是实际 `old_u` 推进的保守下界，但不增加任何 picked 消费者。
+- heavy seeds 3/5/7/11/13/17/19/23/29 的 cycles 为
+  9088/9055/9041/9001/9109/8996/8888/8964/8966，平均 9012，较 E068
+  改善 0.446%。DEPHEAVY seeds 7/19/41 为 15002/14823/14801，平均
+  14875.333（-0.197%）；mid、sparse、60k DEPHEAVY 为
+  10660/24907/44735，dual/full seed7 为 8988/7912。全部回归和 reuse/
+  retirement/credit 断言通过。
+- E068/E070C 配对代理的 low/nom/high 最大 arrival 均为
+  0.7950/0.8675/0.9400 ns；nominal 超过 0.355/0.400 ns 的端点同为
+  910/875，high 超过 0.355/0.400 ns 的端点同为 5086/909。总 cells
+  148066→148290（+0.151%），时序 cells 5861 不变。
+- 最大 arrival 数值和路径人口没有恶化，但代理最坏路径由 E068 的
+  `exit_idx → out_seq_q` 转为 `picked → old_u_n`，所以 E070C 只通过
+  本地候选门槛。必须用 RTL 提交 `d95a825` 运行真实 0.4 ns、uncertainty
+  0.045 ns STA；WNS、TNS、违例数或最大 data arrival 任一劣于 E068
+  都应否决。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -163,5 +186,7 @@
   完整 E068，仅作为归因与复现实验保留。
 - `codex/e070-e068-stall-profile`：从 E068 创建的非综合画像分支；只增加
   testbench 统计，用于否决 HOL priority 并选择后续优化方向。
+- `codex/e070c-e068-stored-tail-credit`：从 E070-P/E068 RTL 派生；扩展
+  credit 仅读取寄存状态，当前仅作为真实 STA/PPA 候选。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
