@@ -32,6 +32,7 @@
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-advance6-credit | 0 | 0 | 0 | E070B；隔离评估最多六项 old-u advance credit |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E070B | `7f1b70a24f930d112b812fa6cf26f62d646b8037` | rob32-advance6-credit | 9040 | 10659 | 24907 | — | — | — | 148018† | — | — | — | 六项 credit 的全部周期结果与 E070A 八项版本一致，heavy 平均相对 E068 -0.475%。但 low/nom/high 最大 arrival 代理恶化到 0.8200/0.8950/0.9700 ns，关键路径回到 `picked → old_u_n`。新增 `iss_eff` 动态读取扩大 picked 扇出，即使总 cells 略降也不满足时序门槛；否决。 |
 
 ### E066 基线与否决记录
 
@@ -137,6 +139,19 @@
   数据或 `exit_idx → out_seq` 路径。若真实 STA 不劣于 E068 且 cycles
   有稳定收益，再考虑比现有 dual-steal 更简单的单路寄存式偷取。
 
+### E070B 六项 advance credit 否决记录
+
+- 六项 credit 的 quick、九个 heavy seed、三个 DEPHEAVY seed、mid、
+  sparse 和 60k DEPHEAVY cycles 与 E070A 八项版本完全一致，说明第七、
+  第八项 credit 没有额外可见收益。
+- 配对代理最大 arrival 从 E068 的 0.7950/0.8675/0.9400 ns 恶化为
+  0.8200/0.8950/0.9700 ns，关键路径由 `exit_idx → out_seq_q` 回到
+  `picked → old_u_n`。原因是扩展位置继续读取 `iss_eff=iss_q|picked`，
+  给 picked 网络增加扇出并改变全局映射。
+- E070B 因最大路径明确恶化而否决。下一隔离候选只能让扩展 credit 读取
+  已寄存的 `iss_q`，前四项继续使用 E068 原有 `iss_eff`，避免新增任何
+  picked 消费者。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -163,5 +178,7 @@
   完整 E068，仅作为归因与复现实验保留。
 - `codex/e070-e068-stall-profile`：从 E068 创建的非综合画像分支；只增加
   testbench 统计，用于否决 HOL priority 并选择后续优化方向。
+- `codex/e070b-e068-advance6-credit`：六项 advance credit 隔离分支；因
+  picked 扇出使最大路径恶化而否决，不作为后续 base。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
