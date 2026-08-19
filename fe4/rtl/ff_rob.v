@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
+// RTL revision : 4FE-safe-v69
+// Experiment   : E069-R32-registered-prewake
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// Changes      : prebind producer tags and register the dependent wake mask
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -37,6 +37,12 @@ module ff_rob #(
   input  wire [NFE*AW-1:0]   exit_idx_f,
   input  wire [NFE-1:0]      pre_v,
   input  wire [NFE*AW-1:0]   pre_idx_f,
+  // One-cycle-earlier producer views used only to register a wake mask.
+  input  wire [NFE-1:0]      far_v,
+  input  wire [NFE*AW-1:0]   far_idx_f,
+  input  wire [NFE-1:0]      issue_v,
+  input  wire [NFE*AW-1:0]   issue_idx_f,
+  input  wire [NFE*2-1:0]    issue_lat_f,
   input  wire [NFE*128-1:0]  fe_od_f,
   // pick / egress feedback
   input  wire [D-1:0]        picked,
@@ -157,6 +163,9 @@ module ff_rob #(
   wire [1:0]    rob_src [0:D-1];
   wire [AW-1:0] exit_idx [0:NFE-1];
   wire [AW-1:0] pre_idx  [0:NFE-1];
+  wire [AW-1:0] far_idx  [0:NFE-1];
+  wire [AW-1:0] issue_idx [0:NFE-1];
+  wire [1:0]    issue_lat [0:NFE-1];
   wire [127:0]  fe_od    [0:NFE-1];
   genvar gi;
   generate
@@ -174,6 +183,9 @@ module ff_rob #(
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uf
       assign exit_idx[gi] = exit_idx_f[gi*AW +: AW];
       assign pre_idx[gi]  = pre_idx_f[gi*AW +: AW];
+      assign far_idx[gi]  = far_idx_f[gi*AW +: AW];
+      assign issue_idx[gi] = issue_idx_f[gi*AW +: AW];
+      assign issue_lat[gi] = issue_lat_f[gi*2 +: 2];
       assign fe_od[gi]    = fe_od_f[gi*128 +: 128];
     end
   endgenerate
@@ -210,13 +222,37 @@ module ff_rob #(
     end
   end
 
-  // pre-wake: target result arrives next cycle -> dependent can enter the FE
-  // in the same cycle the result shows up on FEOUT (dp taken from the bus)
-  reg [D-1:0] wake_now;
+  // Bind dependents one cycle before res_pred from:
+  //   * a latency-one producer in the registered issue view,
+  //   * any producer residing in scheduler slot3.
+  reg [D-1:0] wake_bind_n, wake_bind_q;
+  reg [AW-1:0] bind_tgt;
+  integer bf;
+  reg [D-1:0] wake_now, wake_commit;
   integer e;
   always @* begin
-    for (e = 0; e < D; e = e + 1)
-      wake_now[e] = wtg_q[e] & res_pred_r[rob_tgt[e]];
+    for (e = 0; e < D; e = e + 1) begin
+      bind_tgt = alloc_oh[e] ? slot_tgt[e[1:0]] : rob_tgt[e];
+      wake_bind_n[e] = 1'b0;
+      for (bf = 0; bf < NFE; bf = bf + 1) begin
+        wake_bind_n[e] = wake_bind_n[e]
+                         | ((alloc_oh[e] ? slot_wtg[e[1:0]] : wtg_q[e])
+                            & ((issue_v[bf] && (issue_lat[bf] == 2'd1)
+                                && (issue_idx[bf] == bind_tgt))
+                               | (far_v[bf] && (far_idx[bf] == bind_tgt))));
+      end
+      wake_now[e] = wtg_q[e] & wake_bind_q[e];
+      // Latency-zero producers cross a register boundary before becoming
+      // picker-visible. Their actual-return event updates ROB ready state;
+      // latency classes 1..3 retain same-cycle prewake through wake_bind_q.
+      wake_commit[e] = wake_now[e]
+                       | (wtg_q[e] & res_now_r[rob_tgt[e]]);
+    end
+  end
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) wake_bind_q <= {D{1'b0}};
+    else        wake_bind_q <= wake_bind_n;
   end
 
   // -------------------------------------------------------------------------
@@ -342,6 +378,15 @@ module ff_rob #(
                           + {2'b0, pop_therm[1]}
                           + {2'b0, pop_therm[2]}
                           + {2'b0, pop_therm[3]};
+  reg [D-1:0] lat0_pred_check;
+  integer wf;
+  always @* begin
+    lat0_pred_check = {D{1'b0}};
+    for (wf = 0; wf < NFE; wf = wf + 1)
+      if (issue_v[wf] && (issue_lat[wf] == 2'd0))
+        lat0_pred_check[issue_idx[wf]] = 1'b1;
+  end
+  integer wa;
   always @(posedge clk) begin
     if (rst_n && (reuse_span_n > (D-7)))
       $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
@@ -349,6 +394,13 @@ module ff_rob #(
       $error("[ff_rob] issue credit exceeds old-u advance @%0t", $time);
     if (rst_n && (pop_credit_n != pop_cnt))
       $error("[ff_rob] retirement credit/count mismatch @%0t", $time);
+    if (rst_n)
+      for (wa = 0; wa < D; wa = wa + 1)
+        if (wake_now[wa] !== (wtg_q[wa]
+                              & res_pred_r[rob_tgt[wa]]
+                              & ~lat0_pred_check[rob_tgt[wa]]))
+          $error("[ff_rob] registered prewake mismatch entry %0d @%0t",
+                 wa, $time);
   end
 `endif
 
@@ -403,10 +455,10 @@ module ff_rob #(
           if (picked[e]) begin
             rdy_q[e] <= 1'b0;
             iss_q[e] <= 1'b1;
-          end else if (wake_now[e]) begin
+          end else if (wake_commit[e]) begin
             rdy_q[e] <= 1'b1;
           end
-          if (wake_now[e])  wtg_q[e]  <= 1'b0;
+          if (wake_commit[e]) wtg_q[e] <= 1'b0;
           if (res_now_r[e]) resv_q[e] <= 1'b1;
         end
       end

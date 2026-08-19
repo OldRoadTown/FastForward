@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
+// RTL revision : 4FE-safe-v69
+// Experiment   : E069-R32-registered-prewake
 // Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// Changes      : prebind producer tags and register the dependent wake mask
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -34,7 +34,7 @@
 // =============================================================================
 module ff #(
   parameter REG_FEIN    = 0,
-  parameter WAKE_BYPASS = 0,
+  parameter WAKE_BYPASS = 1,
   parameter DUAL_STEAL  = 0
 )(
   input  wire         clk,
@@ -128,8 +128,8 @@ module ff #(
   wire [NFE-1:0]      issue_v;
   wire [NFE*AW-1:0]   issue_idx_f;
   wire [NFE*2-1:0]    issue_lat_f;
-  wire [NFE-1:0]      exit_v, pre_v;
-  wire [NFE*AW-1:0]   exit_idx_f, pre_idx_f;
+  wire [NFE-1:0]      exit_v, pre_v, far_v;
+  wire [NFE*AW-1:0]   exit_idx_f, pre_idx_f, far_idx_f;
   wire [NFE*4-1:0]    sched_v_f;
 
   wire [NFE-1:0]      fwd_v, fwd_dpv;
@@ -163,6 +163,9 @@ module ff #(
     .kw_vld(kw_vld), .k_tgt_f(k_tgt_f),
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .far_v(far_v), .far_idx_f(far_idx_f),
+    .issue_v(issue_v), .issue_idx_f(issue_idx_f),
+    .issue_lat_f(issue_lat_f),
     .fe_od_f(fe_od_f),
     .picked(picked), .rob_src_f(rob_src_f),
     .pop_cnt(pop_cnt), .pop_therm(pop_therm),
@@ -207,6 +210,7 @@ module ff #(
     .issue_v(issue_v), .issue_idx_f(issue_idx_f), .issue_lat_f(issue_lat_f),
     .exit_v(exit_v), .exit_idx_f(exit_idx_f),
     .pre_v(pre_v), .pre_idx_f(pre_idx_f),
+    .far_v(far_v), .far_idx_f(far_idx_f),
     .sched_v_f(sched_v_f)
   );
 

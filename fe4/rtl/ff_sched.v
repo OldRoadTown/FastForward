@@ -21,6 +21,8 @@ module ff_sched #(
   output wire [NFE*AW-1:0]   exit_idx_f,
   output wire [NFE-1:0]      pre_v,
   output wire [NFE*AW-1:0]   pre_idx_f,
+  output wire [NFE-1:0]      far_v,
+  output wire [NFE*AW-1:0]   far_idx_f,
   output wire [NFE*4-1:0]    sched_v_f      // bit f*4+(s-1) = sched_v[f][s]
 );
 
@@ -70,6 +72,11 @@ module ff_sched #(
                                      | (issue_v[gf] & (issue_lat[gf] == 2'd0));
       assign pre_idx_f[gf*AW +: AW]  = sched_v[gf][2] ? sched_idx[gf][2]
                                                       : issue_idx[gf];
+      // Slot3 is exactly one cycle earlier than the registered slot2
+      // prediction. E069 compares this tag off the wake-to-picker path and
+      // registers the matching dependent mask.
+      assign far_v[gf]               = sched_v[gf][3];
+      assign far_idx_f[gf*AW +: AW]  = sched_idx[gf][3];
       assign sched_v_f[gf*4 +: 4]    = sched_v[gf];
     end
   endgenerate
