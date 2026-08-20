@@ -10,9 +10,9 @@
 //                     output collisions (also checked inside fe_model).
 //  3. PKTOUT        : strict rotating-lane in-order delivery of the golden
 //                     forwarded data.
-//  4. BKPR          : honored by the generator (no input while asserted).
+//  4. BKPR          : honored immediately or with one response beat of lag.
 //
-// Plusargs: +NPKT=<n> +LOADPCT=<0..100> +SEED=<n>
+// Plusargs: +NPKT=<n> +LOADPCT=<0..100> +SEED=<n> +BKPRLAG=<0|1>
 // =============================================================================
 `timescale 1ns/1ps
 
@@ -32,6 +32,7 @@ module tb_top;
   int LOADPCT = 100;
   int SEED    = 1;
   int DEPHEAVY = 0;
+  int BKPRLAG = 0;
 
   // --------------------------------------------------------------------------
   // clock / reset
@@ -54,6 +55,7 @@ module tb_top;
   logic [127:0] lo_d [4];
 
   logic         bkpr;
+  logic         bkpr_seen_q = 1'b0;
 
   logic         fw_v   [4];
   logic [127:0] fw_d   [4];
@@ -258,7 +260,7 @@ module tb_top;
 
       // ---------------- generator ----------------
       for (int l = 0; l < 4; l++) li_v[l] = 1'b0;
-      if (!bkpr && sent < NPKT) begin
+      if (!((BKPRLAG != 0) ? bkpr_seen_q : bkpr) && sent < NPKT) begin
         for (int l = 0; l < 4; l++) begin
           if (sent < NPKT && int'($urandom_range(99)) < LOADPCT) begin
             int d, r;
@@ -289,8 +291,10 @@ module tb_top;
       if (first_in >= 0 && rd_seq < NPKT) begin
         stat_cycles++;
         if (bkpr) stat_bkpr++;
-        if (u_ff.u_rob.occ > u_ff.u_rob.OCC_TH) stat_occ++;
-        if (u_ff.u_rob.win > u_ff.u_rob.WIN_TH) stat_win++;
+        // E074 exposes registered-state ROB admission causes. Queue BKPR may
+        // remain asserted while buffered response beats are draining.
+        if (u_ff.u_rob.occ_over) stat_occ++;
+        if (u_ff.u_rob.win_over) stat_win++;
       end
 
       // ---------------- end / watchdog ----------------
@@ -307,6 +311,7 @@ module tb_top;
                sent, rd_seq, bkpr, cycle);
         repeat_done();
       end
+      bkpr_seen_q = bkpr;
     end
   end
 
@@ -332,6 +337,7 @@ module tb_top;
     void'($value$plusargs("LOADPCT=%d", LOADPCT));
     void'($value$plusargs("SEED=%d", SEED));
     void'($value$plusargs("DEPHEAVY=%d", DEPHEAVY));
+    void'($value$plusargs("BKPRLAG=%d", BKPRLAG));
     if (NPKT > MAXP) NPKT = MAXP;
     void'($urandom(SEED));
 

@@ -1,11 +1,13 @@
 // =============================================================================
-// ff_ingress - S0/S1: PKTIN input registers, valid-lane compaction, per-packet
-//              attribute/dependency resolve, slot rotation, allocation one-hot
+// ff_ingress - three-beat elastic PKTIN queue, valid-lane compaction,
+//              per-packet attribute/dependency resolve, slot rotation,
+//              allocation one-hot
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : use 5-bit physical indexes and 6-bit sequence numbers for R32
+// RTL revision : 4FE-safe-v74
+// Experiment   : E074-R32-ingress-admission
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : absorb the two-beat BKPR response tail outside the ROB, then
+//                dequeue only when the ROB's exact admission check succeeds
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -24,6 +26,7 @@ module ff_ingress #(
   // context
   input  wire [SW-1:0]   alloc_seq,
   input  wire [D-1:0]    res_known,     // resv | res_now | res_pred
+  input  wire            admit_i,       // ROB can consume the current head
   // allocation outputs
   output wire [2:0]      acnt_o,
   output wire [511:0]    slot_dat_f,    // 4 x 128, slot j -> entries e[1:0]==j
@@ -35,7 +38,8 @@ module ff_ingress #(
   output wire [D-1:0]    alloc_oh_o,
   // critical marking (a new dependent makes its target critical)
   output wire [3:0]      kw_vld_o,      // k valid && dependent
-  output wire [4*AW-1:0] k_tgt_f
+  output wire [4*AW-1:0] k_tgt_f,
+  output reg             bkpr_r
 );
 
   // -------------------------------------------------------------------------
@@ -52,25 +56,152 @@ module ff_ingress #(
   endgenerate
 
   // -------------------------------------------------------------------------
-  // S0 input registers (PKTIN must be registered before use)
+  // Elastic input queue
   // -------------------------------------------------------------------------
-  reg [3:0]   in_vld_q;
-  reg [127:0] in_data_q [0:3];
-  reg [4:0]   in_ctrl_q [0:3];
-  integer i;
+  // q0 is the original S0 register. q1/q2 are spill beats used only when the
+  // ROB cannot consume q0. The two spill beats exactly cover the documented
+  // two-cycle / eight-packet response after BKPR is asserted.
+  reg [1:0]   beat_count_q;
+  reg [3:0]   q0_vld_q, q1_vld_q, q2_vld_q;
+  reg [511:0] q0_data_q, q1_data_q, q2_data_q;
+  reg [19:0]  q0_ctrl_q, q1_ctrl_q, q2_ctrl_q;
 
-  always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) in_vld_q <= 4'b0;
-    else        in_vld_q <= in_vld;
+  wire        in_push = |in_vld;
+  wire        head_pop = (beat_count_q != 2'd0) && admit_i;
+  reg  [2:0]  beat_count_n;
+  always @* begin
+    beat_count_n = {1'b0, beat_count_q};
+    case ({head_pop, in_push})
+      2'b01: beat_count_n = {1'b0, beat_count_q} + 3'd1;
+      2'b10: beat_count_n = {1'b0, beat_count_q} - 3'd1;
+      default: begin end
+    endcase
   end
-  always @(posedge clk) begin           // enable-gated datapath, no reset
-    for (i = 0; i < 4; i = i + 1) begin
-      if (in_vld[i]) begin
-        in_data_q[i] <= in_data[i];
-        in_ctrl_q[i] <= in_ctrl[i];
-      end
+
+  // Valid/control state is reset; the wide datapath remains enable-gated and
+  // reset-free. Predicting the post-edge queue count avoids an empty refill
+  // bubble when q0 drains while BKPR is high.
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      beat_count_q <= 2'd0;
+      q0_vld_q     <= 4'b0;
+      q1_vld_q     <= 4'b0;
+      q2_vld_q     <= 4'b0;
+      bkpr_r       <= 1'b0;
+    end else begin
+      case ({head_pop, in_push})
+        2'b01: begin
+          case (beat_count_q)
+            2'd0: q0_vld_q <= in_vld;
+            2'd1: q1_vld_q <= in_vld;
+            2'd2: q2_vld_q <= in_vld;
+            default: begin end
+          endcase
+          if (beat_count_q != 2'd3)
+            beat_count_q <= beat_count_q + 2'd1;
+        end
+        2'b10: begin
+          case (beat_count_q)
+            2'd1: q0_vld_q <= 4'b0;
+            2'd2: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= 4'b0;
+            end
+            2'd3: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= q2_vld_q;
+              q2_vld_q <= 4'b0;
+            end
+            default: begin end
+          endcase
+          beat_count_q <= beat_count_q - 2'd1;
+        end
+        2'b11: begin
+          case (beat_count_q)
+            2'd1: q0_vld_q <= in_vld;
+            2'd2: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= in_vld;
+            end
+            2'd3: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= q2_vld_q;
+              q2_vld_q <= in_vld;
+            end
+            default: begin end
+          endcase
+        end
+        default: begin end
+      endcase
+      bkpr_r <= (beat_count_n >= 3'd2)
+                 || ((beat_count_q != 2'd0) && !admit_i);
     end
   end
+
+  always @(posedge clk) begin
+    case ({head_pop, in_push})
+      2'b01: begin
+        case (beat_count_q)
+          2'd0: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
+          2'd1: begin q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f; end
+          2'd2: begin q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f; end
+          default: begin end
+        endcase
+      end
+      2'b10: begin
+        case (beat_count_q)
+          2'd2: begin q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q; end
+          2'd3: begin
+            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
+            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+          end
+          default: begin end
+        endcase
+      end
+      2'b11: begin
+        case (beat_count_q)
+          2'd1: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
+          2'd2: begin
+            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
+            q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f;
+          end
+          2'd3: begin
+            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
+            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+            q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f;
+          end
+          default: begin end
+        endcase
+      end
+      default: begin end
+    endcase
+  end
+
+  wire [3:0] in_vld_q = (beat_count_q != 2'd0) ? q0_vld_q : 4'b0;
+  wire [127:0] in_data_q [0:3];
+  wire [4:0]   in_ctrl_q [0:3];
+  generate
+    for (gi = 0; gi < 4; gi = gi + 1) begin : g_q0
+      assign in_data_q[gi] = q0_data_q[gi*128 +: 128];
+      assign in_ctrl_q[gi] = q0_ctrl_q[gi*5 +: 5];
+    end
+  endgenerate
+
+`ifndef SYNTHESIS
+  always @(posedge clk) begin
+    if (rst_n && in_push && !head_pop && (beat_count_q == 2'd3))
+      $error("[ff_ingress] elastic input queue overflow @%0t", $time);
+    if (rst_n && (beat_count_q == 2'd0) &&
+        (|q0_vld_q || |q1_vld_q || |q2_vld_q))
+      $error("[ff_ingress] nonempty valid state at zero queue count @%0t", $time);
+    if (rst_n && (beat_count_q != 2'd0) && !(|q0_vld_q))
+      $error("[ff_ingress] empty queue head at nonzero count @%0t", $time);
+    if (rst_n && (beat_count_q < 2'd2) && |q1_vld_q)
+      $error("[ff_ingress] unexpected first spill valid @%0t", $time);
+    if (rst_n && (beat_count_q < 2'd3) && |q2_vld_q)
+      $error("[ff_ingress] unexpected second spill valid @%0t", $time);
+  end
+`endif
 
   // -------------------------------------------------------------------------
   // valid-lane compaction into packet order
@@ -262,6 +393,9 @@ module ff_ingress #(
       // used k_wtg, which put sched/pre_idx -> res_known on the ROB crit_q
       // clock-enable path.  Over-marking an already-resolved target is safe:
       // crit_q only changes priority while that target is still ready.
+      // A blocked head may mark its already-allocated predecessor critical
+      // before the head itself enters the ROB. This is safe because crit only
+      // affects ready-entry priority, and it keeps admit_i out of this path.
       assign kw_vld_o[gi]          = (gi[2:0] < acnt) && k_isdep[gi];
       assign k_tgt_f[gi*AW +: AW]  = k_tgt[gi];
     end
@@ -270,6 +404,6 @@ module ff_ingress #(
   assign slot_rdy_o   = slot_rdy;
   assign slot_wtg_o   = slot_wtg;
   assign slot_isdep_o = slot_isdep;
-  assign alloc_oh_o   = alloc_oh;
+  assign alloc_oh_o   = admit_i ? alloc_oh : {D{1'b0}};
 
 endmodule

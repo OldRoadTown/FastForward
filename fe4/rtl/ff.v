@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v74
+// Experiment   : E074-R32-ingress-admission
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : decouple the two-beat input response tail from ROB admission
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -108,6 +108,7 @@ module ff #(
   wire [D-1:0]        alloc_oh;
   wire [3:0]          kw_vld;
   wire [4*AW-1:0]     k_tgt_f;
+  wire                rob_admit;
 
   wire [D-1:0]        res_now, res_pred, res_known, wake_now;
   wire [D-1:0]        rdy_q, crit_q, resv_q, rob_isdep;
@@ -148,11 +149,13 @@ module ff #(
     .clk(clk), .rst_n(rst_n),
     .in_vld(in_vld), .in_data_f(in_data_f), .in_ctrl_f(in_ctrl_f),
     .alloc_seq(alloc_seq), .res_known(res_known),
+    .admit_i(rob_admit),
     .acnt_o(acnt),
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
     .slot_rdy_o(slot_rdy), .slot_wtg_o(slot_wtg), .slot_isdep_o(slot_isdep),
     .alloc_oh_o(alloc_oh),
-    .kw_vld_o(kw_vld), .k_tgt_f(k_tgt_f)
+    .kw_vld_o(kw_vld), .k_tgt_f(k_tgt_f),
+    .bkpr_r(pkt_in_bkpr)
   );
 
   ff_rob #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_rob (
@@ -172,7 +175,7 @@ module ff #(
     .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f), .rob_tgt_f(rob_tgt_f),
     .rob_isdep_o(rob_isdep),
     .alloc_seq_o(alloc_seq), .out_seq_o(out_seq), .old_u_o(old_u),
-    .bkpr_r(pkt_in_bkpr)
+    .admit_o(rob_admit)
   );
 
   ff_pick #(.D(D), .AW(AW), .NFE(NFE),
