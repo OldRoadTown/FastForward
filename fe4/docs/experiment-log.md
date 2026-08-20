@@ -31,6 +31,8 @@
 | rob32-safe | 0 | 0 | 0 | E021 选择策略；32 项 ROB，picker 为 4×8 分层搜索 |
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
+| rob32-dynamic-credit | 0 | 0 | 0 | E068；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-ingress-admission | 0 | 0 | 0 | E074；入口缓冲吸收 BKPR 响应尾，ROB 按物理边界接收 |
 
 ## 结果
 
@@ -46,6 +48,8 @@
 | E029 | `3bc99500489ab67a8333db3a12b06773a47b1ffd` | rob32-safe | 10337 | 11719 | 24969 | — | — | — | — | — | — | — | 从时序最佳 E021 独立派生的 32 项 ROB 对照实验；本地回归全部通过，但重载 cycles 较 E021 的 6154 增加 68.0%，不能把局部时序改善直接视为 T 改善。统一 Yosys 代理下全设计 AND/NOT 为 144256/94141（E021 为 286332/184578），同法组合深度 65→54；picker 深度 53→44。必须在固定统一用例上实测最终 T 后再决定保留或回退。 |
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
+| E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 固定 23/17 安全阈值不变，以本拍实际退休和最多四项连续 issued 推进动态解除 BKPR；九个重载 seed 平均 9052.333，三个 DEPHEAVY seed 平均 14904.667，60k DEPHEAVY 为 44794，dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理为 0.7950/0.8675/0.9400 ns。用户侧真实 STA 已通过并确认有提升，后续候选均以该版本为功能和时序基线。 |
+| E074 | `d6f33c985007e6925c99f3178ecc366fca9b0faf` | rob32-ingress-admission | 8074 | 10131 | 24907 | — | — | — | 157509† | — | — | — | 从 E068 RTL 独立派生。现有 S0 加两拍 spill buffer 吸收两拍/八包 BKPR 响应尾，ROB 对当前队首按 occupancy 31、reuse span 25 的物理边界精确 admission。九个重载 seed 平均 8054（较 E068 -11.03%），三个 DEPHEAVY seed 平均 14036.333（-5.83%），mid -5.03%，60k DEPHEAVY -5.31%，sparse 不变；dual/full seed7 为 8006/7033（-11.22%/-11.52%）。low/nom/high 最大 arrival 代理与 E068 同为 0.7950/0.8675/0.9400 ns，但状态位 +1074、总 cells +6.38%，且近关键端点显著增加，必须以真实 STA/Power 决定是否保留。 |
 
 ### E066 基线与否决记录
 
@@ -76,6 +80,29 @@
 - E067 不降低 cycles；它为下一步使用本拍 retirement/old-u credit 精确
   解除 BKPR 提供时序余量。后续候选仍须以 E066 的三 corner 最大值为上限。
 
+### E074 入口 admission 记录
+
+- `ff_pick`、`ff_issue`、`ff_sched`、`ff_egress` 与 E068 逐字不变。入口
+  队列保留原 S0 为队首，仅在 ROB 暂停接收时使用两拍 spill；正常流不增加
+  稳态 pipeline 周期。队列 BKPR 覆盖“当前阻塞拍 + 一拍响应延迟”的最多
+  八个输入包，仿真增加 `BKPRLAG=1` 压力模式和 overflow/队列状态断言。
+- ROB admission 只读取寄存后的 `alloc_seq_q/out_seq_q/old_u_q` 和当前队首
+  数量；不再把本拍 `picked` 或 `exit/pop` 接入 admission。允许进入的硬边界
+  为 live occupancy `<=31`、reuse span `<=25`，并逐拍断言两项均不越界。
+- 早期版本保留 E068 同拍 issue credit 时 nominal 最大 arrival 代理为
+  0.9225 ns；只删除 issue credit 后仍因 retirement credit 形成
+  `exit_idx → admit → alloc → crit` 路径，最大值为 0.9150 ns。两版均否决。
+  最终提交删除 admission 的所有同拍 progress credit，三 corner 最大值恢复
+  到 E068 的 0.7950/0.8675/0.9400 ns。
+- 最终重载 seeds 3/5/7/11/13/17/19/23/29 cycles 为
+  8115/8101/8074/8068/8132/8045/7924/8013/8014；DEPHEAVY seeds
+  7/19/41 为 14119/13999/13991。`BKPRLAG=1` 的 60k DEPHEAVY 为
+  42474，所有功能、复用、occupancy 和队列断言通过。
+- 配对 ABC simple 总 cells 为 157509（E068 为 148066），时序状态位
+  6935（E068 为 5861）。这只是通用门级代理；新增缓冲可能增加面积、时钟
+  功耗和布局拥塞，最大 arrival 数值相同也不能替代 0.045 ns uncertainty
+  下的真实 STA。真实最大路径、违例数、面积和活动率功耗不合格时拒绝 E074。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -94,5 +121,9 @@
   ROB reuse-window credit，明确禁止混入 E064/E065。
 - `codex/e067-e066-retire-cleanup`：从 E066 创建的独立 E067；删除
   冗余退休位图，为后续动态 BKPR credit 提供时序余量。
+- `codex/e068-e067-dynamic-bkpr-credit`：从 E067 创建的独立 E068；只用
+  本拍实际进度动态释放 credit，固定安全阈值不变。
+- `codex/e074-e068-ingress-admission`：从 E068 RTL 提交独立创建；用入口
+  弹性缓冲承担 BKPR 响应尾，picker/issue/wake/egress 保持 E068 不变。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
