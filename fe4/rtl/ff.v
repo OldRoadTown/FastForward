@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v77
-// Experiment   : E077-R32-circular-spill
-// Based on     : E074-R32-ingress-admission
-// Changes      : keep exact ROB admission with non-shifting ingress spill banks
+// RTL revision : 4FE-safe-v78
+// Experiment   : E078-R32-head-tail-spill
+// Based on     : E077-R32-circular-spill
+// Changes      : simplify wide spill-bank enables with head/tail ring pointers
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;

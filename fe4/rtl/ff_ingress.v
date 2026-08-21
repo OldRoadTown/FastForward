@@ -3,11 +3,11 @@
 //              per-packet attribute/dependency resolve, slot rotation,
 //              allocation one-hot
 //
-// RTL revision : 4FE-safe-v77
-// Experiment   : E077-R32-circular-spill
-// Based on     : E074-R32-ingress-admission
-// Changes      : hold the two response-tail beats in fixed spill banks instead
-//                of shifting a 532-bit queue on every dequeue
+// RTL revision : 4FE-safe-v78
+// Experiment   : E078-R32-head-tail-spill
+// Based on     : E077-R32-circular-spill
+// Changes      : use independent one-bit head/tail pointers so each wide spill
+//                bank has a regular enqueue-only datapath
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -61,16 +61,24 @@ module ff_ingress #(
   // q0 is the original S0 register. sp0/sp1 are circular spill banks used only
   // when the ROB cannot consume q0. The two spill beats exactly cover the
   // documented two-cycle / eight-packet response after BKPR is asserted.
-  // A dequeue reads the oldest spill bank into q0 and reuses that same bank as
-  // the tail on a simultaneous enqueue, avoiding q2->q1 wide-data movement.
+  // Independent head/tail pointers make each spill bank an enqueue-only data
+  // register. A simultaneous dequeue/enqueue reads the old head value into q0
+  // before the same physical bank can be reused as the new tail.
   reg [1:0]   beat_count_q;
   reg         spill_head_q;
+  reg         spill_tail_q;
   reg [3:0]   q0_vld_q, sp0_vld_q, sp1_vld_q;
   reg [511:0] q0_data_q, sp0_data_q, sp1_data_q;
   reg [19:0]  q0_ctrl_q, sp0_ctrl_q, sp1_ctrl_q;
 
   wire        in_push = |in_vld;
   wire        head_pop = (beat_count_q != 2'd0) && admit_i;
+  wire        spill_pop = head_pop && (beat_count_q >= 2'd2);
+  wire        q0_take_input = in_push &&
+                              ((beat_count_q == 2'd0) ||
+                               (head_pop && (beat_count_q == 2'd1)));
+  wire        spill_push = in_push && !q0_take_input &&
+                           (head_pop || (beat_count_q != 2'd3));
   reg  [2:0]  beat_count_n;
   always @* begin
     beat_count_n = {1'b0, beat_count_q};
@@ -88,131 +96,64 @@ module ff_ingress #(
     if (!rst_n) begin
       beat_count_q <= 2'd0;
       spill_head_q <= 1'b0;
+      spill_tail_q <= 1'b0;
       q0_vld_q     <= 4'b0;
       sp0_vld_q    <= 4'b0;
       sp1_vld_q    <= 4'b0;
       bkpr_r       <= 1'b0;
     end else begin
-      case ({head_pop, in_push})
-        2'b01: begin
-          case (beat_count_q)
-            2'd0: q0_vld_q <= in_vld;
-            2'd1: begin
-              sp0_vld_q    <= in_vld;
-              spill_head_q <= 1'b0;
-            end
-            2'd2: begin
-              if (spill_head_q) sp0_vld_q <= in_vld;
-              else              sp1_vld_q <= in_vld;
-            end
-            default: begin end
-          endcase
-          if (beat_count_q != 2'd3)
-            beat_count_q <= beat_count_q + 2'd1;
-        end
-        2'b10: begin
-          case (beat_count_q)
-            2'd1: q0_vld_q <= 4'b0;
-            2'd2: begin
-              if (spill_head_q) begin
-                q0_vld_q  <= sp1_vld_q;
-                sp1_vld_q <= 4'b0;
-              end else begin
-                q0_vld_q  <= sp0_vld_q;
-                sp0_vld_q <= 4'b0;
-              end
-            end
-            2'd3: begin
-              if (spill_head_q) begin
-                q0_vld_q  <= sp1_vld_q;
-                sp1_vld_q <= 4'b0;
-              end else begin
-                q0_vld_q  <= sp0_vld_q;
-                sp0_vld_q <= 4'b0;
-              end
-              spill_head_q <= ~spill_head_q;
-            end
-            default: begin end
-          endcase
-          beat_count_q <= beat_count_q - 2'd1;
-        end
-        2'b11: begin
-          case (beat_count_q)
-            2'd1: q0_vld_q <= in_vld;
-            2'd2: begin
-              if (spill_head_q) begin
-                q0_vld_q  <= sp1_vld_q;
-                sp1_vld_q <= in_vld;
-              end else begin
-                q0_vld_q  <= sp0_vld_q;
-                sp0_vld_q <= in_vld;
-              end
-            end
-            2'd3: begin
-              if (spill_head_q) begin
-                q0_vld_q  <= sp1_vld_q;
-                sp1_vld_q <= in_vld;
-              end else begin
-                q0_vld_q  <= sp0_vld_q;
-                sp0_vld_q <= in_vld;
-              end
-              spill_head_q <= ~spill_head_q;
-            end
-            default: begin end
-          endcase
-        end
+      if (q0_take_input)
+        q0_vld_q <= in_vld;
+      else if (spill_pop)
+        q0_vld_q <= spill_head_q ? sp1_vld_q : sp0_vld_q;
+      else if (head_pop)
+        q0_vld_q <= 4'b0;
+
+      case ({spill_pop && !spill_head_q,
+             spill_push && !spill_tail_q})
+        2'b01, 2'b11: sp0_vld_q <= in_vld;
+        2'b10:        sp0_vld_q <= 4'b0;
         default: begin end
       endcase
+      case ({spill_pop && spill_head_q,
+             spill_push && spill_tail_q})
+        2'b01, 2'b11: sp1_vld_q <= in_vld;
+        2'b10:        sp1_vld_q <= 4'b0;
+        default: begin end
+      endcase
+
+      if (spill_pop)  spill_head_q <= ~spill_head_q;
+      if (spill_push) spill_tail_q <= ~spill_tail_q;
+      if (in_push && !head_pop && (beat_count_q != 2'd3))
+        beat_count_q <= beat_count_q + 2'd1;
+      else if (head_pop && !in_push)
+        beat_count_q <= beat_count_q - 2'd1;
       bkpr_r <= (beat_count_n >= 3'd2)
                  || ((beat_count_q != 2'd0) && !admit_i);
     end
   end
 
   always @(posedge clk) begin
-    case ({head_pop, in_push})
-      2'b01: begin
-        case (beat_count_q)
-          2'd0: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd1: begin sp0_data_q <= in_data_f; sp0_ctrl_q <= in_ctrl_f; end
-          2'd2: begin
-            if (spill_head_q) begin
-              sp0_data_q <= in_data_f; sp0_ctrl_q <= in_ctrl_f;
-            end else begin
-              sp1_data_q <= in_data_f; sp1_ctrl_q <= in_ctrl_f;
-            end
-          end
-          default: begin end
-        endcase
+    if (q0_take_input) begin
+      q0_data_q <= in_data_f;
+      q0_ctrl_q <= in_ctrl_f;
+    end else if (spill_pop) begin
+      if (spill_head_q) begin
+        q0_data_q <= sp1_data_q;
+        q0_ctrl_q <= sp1_ctrl_q;
+      end else begin
+        q0_data_q <= sp0_data_q;
+        q0_ctrl_q <= sp0_ctrl_q;
       end
-      2'b10: begin
-        case (beat_count_q)
-          2'd2, 2'd3: begin
-            if (spill_head_q) begin
-              q0_data_q <= sp1_data_q; q0_ctrl_q <= sp1_ctrl_q;
-            end else begin
-              q0_data_q <= sp0_data_q; q0_ctrl_q <= sp0_ctrl_q;
-            end
-          end
-          default: begin end
-        endcase
-      end
-      2'b11: begin
-        case (beat_count_q)
-          2'd1: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd2, 2'd3: begin
-            if (spill_head_q) begin
-              q0_data_q  <= sp1_data_q; q0_ctrl_q  <= sp1_ctrl_q;
-              sp1_data_q <= in_data_f;  sp1_ctrl_q <= in_ctrl_f;
-            end else begin
-              q0_data_q  <= sp0_data_q; q0_ctrl_q  <= sp0_ctrl_q;
-              sp0_data_q <= in_data_f;  sp0_ctrl_q <= in_ctrl_f;
-            end
-          end
-          default: begin end
-        endcase
-      end
-      default: begin end
-    endcase
+    end
+    if (spill_push && !spill_tail_q) begin
+      sp0_data_q <= in_data_f;
+      sp0_ctrl_q <= in_ctrl_f;
+    end
+    if (spill_push && spill_tail_q) begin
+      sp1_data_q <= in_data_f;
+      sp1_ctrl_q <= in_ctrl_f;
+    end
   end
 
   wire [3:0] in_vld_q = (beat_count_q != 2'd0) ? q0_vld_q : 4'b0;
@@ -237,12 +178,17 @@ module ff_ingress #(
     if (rst_n && (beat_count_q < 2'd2) &&
         (|sp0_vld_q || |sp1_vld_q))
       $error("[ff_ingress] unexpected spill valid @%0t", $time);
+    if (rst_n && (beat_count_q < 2'd2) &&
+        (spill_head_q != spill_tail_q))
+      $error("[ff_ingress] empty spill pointer mismatch @%0t", $time);
     if (rst_n && (beat_count_q == 2'd2) &&
-        (spill_head_q ? (!(|sp1_vld_q) || |sp0_vld_q)
-                      : (!(|sp0_vld_q) || |sp1_vld_q)))
+        ((spill_head_q == spill_tail_q) ||
+         (spill_head_q ? (!(|sp1_vld_q) || |sp0_vld_q)
+                       : (!(|sp0_vld_q) || |sp1_vld_q))))
       $error("[ff_ingress] invalid single-spill state @%0t", $time);
     if (rst_n && (beat_count_q == 2'd3) &&
-        (!(|sp0_vld_q) || !(|sp1_vld_q)))
+        ((spill_head_q != spill_tail_q) ||
+         !(|sp0_vld_q) || !(|sp1_vld_q)))
       $error("[ff_ingress] invalid full-spill state @%0t", $time);
   end
 `endif
