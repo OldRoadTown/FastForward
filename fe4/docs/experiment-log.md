@@ -33,6 +33,8 @@
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E068；用本拍实际退休/发射推进精确解除 BKPR |
 | rob32-ingress-admission | 0 | 0 | 0 | E074；入口缓冲吸收 BKPR 响应尾，ROB 按物理边界接收 |
+| rob32-circular-spill | 0 | 0 | 0 | E077；固定 spill bank 代替宽队列逐拍移位 |
+| rob32-head-tail-spill | 0 | 0 | 0 | E078；head/tail 指针简化 spill bank 宽写控制 |
 
 ## 结果
 
@@ -50,6 +52,8 @@
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 固定 23/17 安全阈值不变，以本拍实际退休和最多四项连续 issued 推进动态解除 BKPR；九个重载 seed 平均 9052.333，三个 DEPHEAVY seed 平均 14904.667，60k DEPHEAVY 为 44794，dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理为 0.7950/0.8675/0.9400 ns。用户侧真实 STA 已通过并确认有提升，后续候选均以该版本为功能和时序基线。 |
 | E074 | `d6f33c985007e6925c99f3178ecc366fca9b0faf` | rob32-ingress-admission | 8074 | 10131 | 24907 | — | — | — | 157509† | — | — | — | 从 E068 RTL 独立派生。现有 S0 加两拍 spill buffer 吸收两拍/八包 BKPR 响应尾，ROB 对当前队首按 occupancy 31、reuse span 25 的物理边界精确 admission。九个重载 seed 平均 8054（较 E068 -11.03%），三个 DEPHEAVY seed 平均 14036.333（-5.83%），mid -5.03%，60k DEPHEAVY -5.31%，sparse 不变；dual/full seed7 为 8006/7033（-11.22%/-11.52%）。low/nom/high 最大 arrival 代理与 E068 同为 0.7950/0.8675/0.9400 ns，但状态位 +1074、总 cells +6.38%，且近关键端点显著增加，必须以真实 STA/Power 决定是否保留。 |
+| E077 | `77c09f909afcfc7ab21dbec140bc7ff97b55e392` | rob32-circular-spill | 8074 | 10131 | 24907 | — | — | — | 155379† | — | — | — | E074 队列的等价重构：q0 保持队首，两个固定 spill bank 以单 head 指针轮换，删除 q2→q1 的 532-bit 移位。所有 cycles 与 E074 一致；总 cells 较 E074 -1.35%，但状态位 +1 且近关键端点未改善，作为中间检查点。 |
+| E078 | `14bc4b0f6cf8da05b849c8e4cd9364b47dde35e0` | rob32-head-tail-spill | 8074 | 10131 | 24907 | — | — | — | 151871† | — | — | — | 在 E077 上以独立 1-bit head/tail 指针把两个 spill bank 变成规则的 enqueue-only 宽寄存器。完整回归与 E074 cycles 精确一致，故保留相对 E068 的 heavy -11.03%、DEPHEAVY -5.83%、dual/full -11.22%/-11.52%。总 cells 只比 E068 +2.57%，组合 cells +1.92%；low/nom/high 最大 arrival 仍为 0.7950/0.8675/0.9400 ns。忽略 Power 的 T^4/Area 代理为 E068 的 1.556 倍；若 Power 保守按 cells 同比例增长则为 1.517 倍。真实 STA/Power/统一 T 待签核。 |
 
 ### E066 基线与否决记录
 
@@ -103,6 +107,29 @@
   功耗和布局拥塞，最大 arrival 数值相同也不能替代 0.045 ns uncertainty
   下的真实 STA。真实最大路径、违例数、面积和活动率功耗不合格时拒绝 E074。
 
+### E078 head/tail spill 记录
+
+- E077 先把 E074 的 q0/q1/q2 移位队列改为 q0 加两个固定 spill bank，
+  删除 spill bank 之间的 532-bit 复制；E078 再采用独立 head/tail 指针，
+  使每个 spill 宽数据寄存器只从 `in_data_f/in_ctrl_f` 接收 enqueue 写入。
+  q0 仍是唯一队首，ROB admission、安全阈值和 BKPR 响应容量均未改变。
+- quick、重载 seeds 3/5/7/11/13/17/19/23/29、DEPHEAVY seeds
+  7/19/41、60k `BKPRLAG=1`、mid/sparse、dual/full 均通过；所有 cycles
+  与 E074 精确一致。额外断言覆盖 overflow、count/valid 一致性以及
+  empty/single/full 三种 spill 指针关系。
+- 同一 ABC simple 流程下，E068/E074/E077/E078 总 cells 分别为
+  148066/157509/155379/151871；时序状态位为 5861/6935/6936/6937。
+  因此 E078 相对 E068 的总 cells 代价从 E074 的 +6.38% 压到 +2.57%，
+  组合 cells 仅 +1.92%；相对 E074 总 cells -3.58%、组合 cells -3.75%。
+- E078 low/nom/high 最大 arrival 代理与 E068 完全相同，仍为
+  0.7950/0.8675/0.9400 ns。nominal `>.400 ns` 端点从 E074 的 12727
+  降到 11728，但仍显著多于 E068 的 907；最大值不恶化不等于物理时序
+  已签核，必须在相同约束下检查真实 worst path、uncertainty 和拥塞。
+- heavy 平均 cycles 9052.333→8054 后，单独的 T^4 因子为 1.596。
+  除以 cell-area 比值得 1.556；再保守假设 Power 与 cells 同比例增加，
+  代理仍为 1.517。该数字用于筛选，不替代统一用例 T、真实 Area/Power
+  和最终 score。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -125,5 +152,9 @@
   本拍实际进度动态释放 credit，固定安全阈值不变。
 - `codex/e074-e068-ingress-admission`：从 E068 RTL 提交独立创建；用入口
   弹性缓冲承担 BKPR 响应尾，picker/issue/wake/egress 保持 E068 不变。
+- `codex/e077-e074-circular-spill`：从 E074 创建；以固定 spill bank 删除
+  宽队列逐拍移位，保留为 E078 的中间检查点。
+- `codex/e078-e077-head-tail-spill`：从 E077 创建；以独立 head/tail 指针
+  规整 spill bank 写使能，是当前大幅提分候选。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
