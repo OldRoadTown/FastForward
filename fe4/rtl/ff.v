@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v75
+// Experiment   : E075-R32-fifth-stored-credit
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : add one conservative registered-state BKPR issue credit
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
