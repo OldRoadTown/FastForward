@@ -33,6 +33,7 @@
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E068；用本拍实际退休/发射推进精确解除 BKPR |
 | rob32-ingress-admission | 0 | 0 | 0 | E074；入口缓冲吸收 BKPR 响应尾，ROB 按物理边界接收 |
+| rob32-unconditional-input | 0 | 0 | 0 | E074A；原始 PKTIN 无条件打拍后才参与入口控制 |
 
 ## 结果
 
@@ -50,6 +51,7 @@
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 固定 23/17 安全阈值不变，以本拍实际退休和最多四项连续 issued 推进动态解除 BKPR；九个重载 seed 平均 9052.333，三个 DEPHEAVY seed 平均 14904.667，60k DEPHEAVY 为 44794，dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理为 0.7950/0.8675/0.9400 ns。用户侧真实 STA 已通过并确认有提升，后续候选均以该版本为功能和时序基线。 |
 | E074 | `d6f33c985007e6925c99f3178ecc366fca9b0faf` | rob32-ingress-admission | 8074 | 10131 | 24907 | — | — | — | 157509† | — | — | — | 从 E068 RTL 独立派生。现有 S0 加两拍 spill buffer 吸收两拍/八包 BKPR 响应尾，ROB 对当前队首按 occupancy 31、reuse span 25 的物理边界精确 admission。九个重载 seed 平均 8054（较 E068 -11.03%），三个 DEPHEAVY seed 平均 14036.333（-5.83%），mid -5.03%，60k DEPHEAVY -5.31%，sparse 不变；dual/full seed7 为 8006/7033（-11.22%/-11.52%）。low/nom/high 最大 arrival 代理与 E068 同为 0.7950/0.8675/0.9400 ns，但状态位 +1074、总 cells +6.38%，且近关键端点显著增加，必须以真实 STA/Power 决定是否保留。 |
+| E074A | `7e47fa302aea068834934b7e99e753716c2e91ed` | rob32-unconditional-input | 8075 | 10132 | 24908 | — | — | — | 157218† | — | — | — | 从 E074 独立派生。原始 `in_vld/in_data/in_ctrl` 每拍无条件进入专用 S0，队列写入、BKPR 和 admission 只读取寄存后信号；后级扩为四拍弹性队列以安全容纳 S0 与 BKPR 响应尾。所有常规 workload 相对 E074 固定 +1 cycle；九个重载 seed 平均 8055，三个 DEPHEAVY seed 平均 14037.333。配对 ABC simple 的 low/nom/high 最大 arrival 与 E074 完全相同，状态位 6935→8008；真实 STA/Power 待测。 |
 
 ### E066 基线与否决记录
 
@@ -103,6 +105,24 @@
   功耗和布局拥塞，最大 arrival 数值相同也不能替代 0.045 ns uncertainty
   下的真实 STA。真实最大路径、违例数、面积和活动率功耗不合格时拒绝 E074。
 
+### E074A 无条件输入寄存记录
+
+- 原始 `in_vld` 在 `ff_ingress` 中只用于 `s0_vld_q <= in_vld`，不再直接
+  参与任何组合控制条件；`in_data_f/in_ctrl_f` 同拍无条件写入 S0 数据寄存器，
+  后续 `in_push`、队列写使能、BKPR 和 ROB admission 均只读取 `s0_*_q`。
+- 因为 S0 不能停写，E074 的三拍队列扩为 q0..q3 四拍，覆盖“已寄存 S0 +
+  当前阻塞拍 + 一拍 BKPR 响应延迟”。`BKPRLAG=1` 的 60k DEPHEAVY 为
+  42465 cycles，队列 overflow、occupancy 和 reuse-span 断言全部通过。
+- 重载 seeds 3/5/7/11/13/17/19/23/29 cycles 为
+  8116/8102/8075/8069/8133/8046/7925/8014/8015；DEPHEAVY seeds
+  7/19/41 为 14120/14000/13992。相对 E074 每项均固定增加一个入口延迟周期，
+  稳态吞吐和接收策略不变；mid seed11 为 10132，sparse seed11 为 24908。
+- 删除队首 `beat_count!=0` 的冗余 valid 门控后，配对 ABC simple 的
+  low/nom/high 最大 arrival 为 0.7950/0.8675/0.9400 ns，与 E074 完全一致；
+  总 cells 157218（E074 为 157509），时序状态位 8008（E074 为 6935）。
+  cell 数和最大 arrival 仅为通用代理，新增寄存器的时钟功耗与布局拥塞仍须
+  在 0.045 ns uncertainty 的真实 STA/PPA 中签核。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -125,5 +145,7 @@
   本拍实际进度动态释放 credit，固定安全阈值不变。
 - `codex/e074-e068-ingress-admission`：从 E068 RTL 提交独立创建；用入口
   弹性缓冲承担 BKPR 响应尾，picker/issue/wake/egress 保持 E068 不变。
+- `codex/e074a-e074-unconditional-input`：从 E074 独立创建；原始 PKTIN
+  无条件进入边界 S0，任何入口组合控制只使用打拍后的输入状态。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
