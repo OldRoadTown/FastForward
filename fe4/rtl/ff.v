@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v74
-// Experiment   : E074-R32-ingress-admission
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : decouple the two-beat input response tail from ROB admission
+// RTL revision : 4FE-safe-v77
+// Experiment   : E077-R32-circular-spill
+// Based on     : E074-R32-ingress-admission
+// Changes      : keep exact ROB admission with non-shifting ingress spill banks
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;

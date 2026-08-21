@@ -1,13 +1,13 @@
 // =============================================================================
-// ff_ingress - three-beat elastic PKTIN queue, valid-lane compaction,
+// ff_ingress - three-beat circular-spill PKTIN queue, valid-lane compaction,
 //              per-packet attribute/dependency resolve, slot rotation,
 //              allocation one-hot
 //
-// RTL revision : 4FE-safe-v74
-// Experiment   : E074-R32-ingress-admission
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : absorb the two-beat BKPR response tail outside the ROB, then
-//                dequeue only when the ROB's exact admission check succeeds
+// RTL revision : 4FE-safe-v77
+// Experiment   : E077-R32-circular-spill
+// Based on     : E074-R32-ingress-admission
+// Changes      : hold the two response-tail beats in fixed spill banks instead
+//                of shifting a 532-bit queue on every dequeue
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -58,13 +58,16 @@ module ff_ingress #(
   // -------------------------------------------------------------------------
   // Elastic input queue
   // -------------------------------------------------------------------------
-  // q0 is the original S0 register. q1/q2 are spill beats used only when the
-  // ROB cannot consume q0. The two spill beats exactly cover the documented
-  // two-cycle / eight-packet response after BKPR is asserted.
+  // q0 is the original S0 register. sp0/sp1 are circular spill banks used only
+  // when the ROB cannot consume q0. The two spill beats exactly cover the
+  // documented two-cycle / eight-packet response after BKPR is asserted.
+  // A dequeue reads the oldest spill bank into q0 and reuses that same bank as
+  // the tail on a simultaneous enqueue, avoiding q2->q1 wide-data movement.
   reg [1:0]   beat_count_q;
-  reg [3:0]   q0_vld_q, q1_vld_q, q2_vld_q;
-  reg [511:0] q0_data_q, q1_data_q, q2_data_q;
-  reg [19:0]  q0_ctrl_q, q1_ctrl_q, q2_ctrl_q;
+  reg         spill_head_q;
+  reg [3:0]   q0_vld_q, sp0_vld_q, sp1_vld_q;
+  reg [511:0] q0_data_q, sp0_data_q, sp1_data_q;
+  reg [19:0]  q0_ctrl_q, sp0_ctrl_q, sp1_ctrl_q;
 
   wire        in_push = |in_vld;
   wire        head_pop = (beat_count_q != 2'd0) && admit_i;
@@ -84,17 +87,24 @@ module ff_ingress #(
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       beat_count_q <= 2'd0;
+      spill_head_q <= 1'b0;
       q0_vld_q     <= 4'b0;
-      q1_vld_q     <= 4'b0;
-      q2_vld_q     <= 4'b0;
+      sp0_vld_q    <= 4'b0;
+      sp1_vld_q    <= 4'b0;
       bkpr_r       <= 1'b0;
     end else begin
       case ({head_pop, in_push})
         2'b01: begin
           case (beat_count_q)
             2'd0: q0_vld_q <= in_vld;
-            2'd1: q1_vld_q <= in_vld;
-            2'd2: q2_vld_q <= in_vld;
+            2'd1: begin
+              sp0_vld_q    <= in_vld;
+              spill_head_q <= 1'b0;
+            end
+            2'd2: begin
+              if (spill_head_q) sp0_vld_q <= in_vld;
+              else              sp1_vld_q <= in_vld;
+            end
             default: begin end
           endcase
           if (beat_count_q != 2'd3)
@@ -104,13 +114,23 @@ module ff_ingress #(
           case (beat_count_q)
             2'd1: q0_vld_q <= 4'b0;
             2'd2: begin
-              q0_vld_q <= q1_vld_q;
-              q1_vld_q <= 4'b0;
+              if (spill_head_q) begin
+                q0_vld_q  <= sp1_vld_q;
+                sp1_vld_q <= 4'b0;
+              end else begin
+                q0_vld_q  <= sp0_vld_q;
+                sp0_vld_q <= 4'b0;
+              end
             end
             2'd3: begin
-              q0_vld_q <= q1_vld_q;
-              q1_vld_q <= q2_vld_q;
-              q2_vld_q <= 4'b0;
+              if (spill_head_q) begin
+                q0_vld_q  <= sp1_vld_q;
+                sp1_vld_q <= 4'b0;
+              end else begin
+                q0_vld_q  <= sp0_vld_q;
+                sp0_vld_q <= 4'b0;
+              end
+              spill_head_q <= ~spill_head_q;
             end
             default: begin end
           endcase
@@ -120,13 +140,23 @@ module ff_ingress #(
           case (beat_count_q)
             2'd1: q0_vld_q <= in_vld;
             2'd2: begin
-              q0_vld_q <= q1_vld_q;
-              q1_vld_q <= in_vld;
+              if (spill_head_q) begin
+                q0_vld_q  <= sp1_vld_q;
+                sp1_vld_q <= in_vld;
+              end else begin
+                q0_vld_q  <= sp0_vld_q;
+                sp0_vld_q <= in_vld;
+              end
             end
             2'd3: begin
-              q0_vld_q <= q1_vld_q;
-              q1_vld_q <= q2_vld_q;
-              q2_vld_q <= in_vld;
+              if (spill_head_q) begin
+                q0_vld_q  <= sp1_vld_q;
+                sp1_vld_q <= in_vld;
+              end else begin
+                q0_vld_q  <= sp0_vld_q;
+                sp0_vld_q <= in_vld;
+              end
+              spill_head_q <= ~spill_head_q;
             end
             default: begin end
           endcase
@@ -143,17 +173,25 @@ module ff_ingress #(
       2'b01: begin
         case (beat_count_q)
           2'd0: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd1: begin q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f; end
-          2'd2: begin q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f; end
+          2'd1: begin sp0_data_q <= in_data_f; sp0_ctrl_q <= in_ctrl_f; end
+          2'd2: begin
+            if (spill_head_q) begin
+              sp0_data_q <= in_data_f; sp0_ctrl_q <= in_ctrl_f;
+            end else begin
+              sp1_data_q <= in_data_f; sp1_ctrl_q <= in_ctrl_f;
+            end
+          end
           default: begin end
         endcase
       end
       2'b10: begin
         case (beat_count_q)
-          2'd2: begin q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q; end
-          2'd3: begin
-            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
-            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+          2'd2, 2'd3: begin
+            if (spill_head_q) begin
+              q0_data_q <= sp1_data_q; q0_ctrl_q <= sp1_ctrl_q;
+            end else begin
+              q0_data_q <= sp0_data_q; q0_ctrl_q <= sp0_ctrl_q;
+            end
           end
           default: begin end
         endcase
@@ -161,14 +199,14 @@ module ff_ingress #(
       2'b11: begin
         case (beat_count_q)
           2'd1: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd2: begin
-            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
-            q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f;
-          end
-          2'd3: begin
-            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
-            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
-            q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f;
+          2'd2, 2'd3: begin
+            if (spill_head_q) begin
+              q0_data_q  <= sp1_data_q; q0_ctrl_q  <= sp1_ctrl_q;
+              sp1_data_q <= in_data_f;  sp1_ctrl_q <= in_ctrl_f;
+            end else begin
+              q0_data_q  <= sp0_data_q; q0_ctrl_q  <= sp0_ctrl_q;
+              sp0_data_q <= in_data_f;  sp0_ctrl_q <= in_ctrl_f;
+            end
           end
           default: begin end
         endcase
@@ -192,14 +230,20 @@ module ff_ingress #(
     if (rst_n && in_push && !head_pop && (beat_count_q == 2'd3))
       $error("[ff_ingress] elastic input queue overflow @%0t", $time);
     if (rst_n && (beat_count_q == 2'd0) &&
-        (|q0_vld_q || |q1_vld_q || |q2_vld_q))
+        (|q0_vld_q || |sp0_vld_q || |sp1_vld_q))
       $error("[ff_ingress] nonempty valid state at zero queue count @%0t", $time);
     if (rst_n && (beat_count_q != 2'd0) && !(|q0_vld_q))
       $error("[ff_ingress] empty queue head at nonzero count @%0t", $time);
-    if (rst_n && (beat_count_q < 2'd2) && |q1_vld_q)
-      $error("[ff_ingress] unexpected first spill valid @%0t", $time);
-    if (rst_n && (beat_count_q < 2'd3) && |q2_vld_q)
-      $error("[ff_ingress] unexpected second spill valid @%0t", $time);
+    if (rst_n && (beat_count_q < 2'd2) &&
+        (|sp0_vld_q || |sp1_vld_q))
+      $error("[ff_ingress] unexpected spill valid @%0t", $time);
+    if (rst_n && (beat_count_q == 2'd2) &&
+        (spill_head_q ? (!(|sp1_vld_q) || |sp0_vld_q)
+                      : (!(|sp0_vld_q) || |sp1_vld_q)))
+      $error("[ff_ingress] invalid single-spill state @%0t", $time);
+    if (rst_n && (beat_count_q == 2'd3) &&
+        (!(|sp0_vld_q) || !(|sp1_vld_q)))
+      $error("[ff_ingress] invalid full-spill state @%0t", $time);
   end
 `endif
 
