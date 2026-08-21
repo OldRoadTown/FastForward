@@ -1,13 +1,14 @@
 // =============================================================================
-// ff_ingress - three-beat elastic PKTIN queue, valid-lane compaction,
+// ff_ingress - unconditional PKTIN S0 + four-beat elastic queue,
+//              valid-lane compaction,
 //              per-packet attribute/dependency resolve, slot rotation,
 //              allocation one-hot
 //
-// RTL revision : 4FE-safe-v74
-// Experiment   : E074-R32-ingress-admission
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : absorb the two-beat BKPR response tail outside the ROB, then
-//                dequeue only when the ROB's exact admission check succeeds
+// RTL revision : 4FE-safe-v74a
+// Experiment   : E074A-R32-unconditional-input
+// Based on     : E074-R32-ingress-admission
+// Changes      : isolate raw PKTIN behind an unconditional S0 register; all
+//                queue and BKPR decisions use only registered input state
 //
 // Slot rotation: ROB entry e is only ever written from fixed source slot
 // e[1:0], so each entry has a single input write source.
@@ -43,37 +44,43 @@ module ff_ingress #(
 );
 
   // -------------------------------------------------------------------------
-  // unpack
+  // Unconditional input boundary register + elastic input queue
   // -------------------------------------------------------------------------
-  wire [127:0] in_data [0:3];
-  wire [4:0]   in_ctrl [0:3];
-  genvar gi;
-  generate
-    for (gi = 0; gi < 4; gi = gi + 1) begin : g_up
-      assign in_data[gi] = in_data_f[gi*128 +: 128];
-      assign in_ctrl[gi] = in_ctrl_f[gi*5 +: 5];
-    end
-  endgenerate
+  // Raw PKTIN appears only on the D side of these registers. In particular,
+  // raw in_vld is not allowed to control queue writes, BKPR, or ROB admission.
+  // The payload/control registers are intentionally reset-free but are still
+  // sampled every cycle; s0_vld_q is the sole qualifier for their contents.
+  reg [3:0]   s0_vld_q;
+  reg [511:0] s0_data_q;
+  reg [19:0]  s0_ctrl_q;
 
-  // -------------------------------------------------------------------------
-  // Elastic input queue
-  // -------------------------------------------------------------------------
-  // q0 is the original S0 register. q1/q2 are spill beats used only when the
-  // ROB cannot consume q0. The two spill beats exactly cover the documented
-  // two-cycle / eight-packet response after BKPR is asserted.
-  reg [1:0]   beat_count_q;
-  reg [3:0]   q0_vld_q, q1_vld_q, q2_vld_q;
-  reg [511:0] q0_data_q, q1_data_q, q2_data_q;
-  reg [19:0]  q0_ctrl_q, q1_ctrl_q, q2_ctrl_q;
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      s0_vld_q <= 4'b0;
+    else
+      s0_vld_q <= in_vld;
+  end
 
-  wire        in_push = |in_vld;
-  wire        head_pop = (beat_count_q != 2'd0) && admit_i;
+  always @(posedge clk) begin
+    s0_data_q <= in_data_f;
+    s0_ctrl_q <= in_ctrl_f;
+  end
+
+  // q0 is the consumable head. q1/q2/q3 absorb the registered S0 beat and the
+  // documented BKPR response tail when the ROB temporarily stops admitting.
+  reg [2:0]   beat_count_q;
+  reg [3:0]   q0_vld_q, q1_vld_q, q2_vld_q, q3_vld_q;
+  reg [511:0] q0_data_q, q1_data_q, q2_data_q, q3_data_q;
+  reg [19:0]  q0_ctrl_q, q1_ctrl_q, q2_ctrl_q, q3_ctrl_q;
+
+  wire        in_push = |s0_vld_q;
+  wire        head_pop = (beat_count_q != 3'd0) && admit_i;
   reg  [2:0]  beat_count_n;
   always @* begin
-    beat_count_n = {1'b0, beat_count_q};
+    beat_count_n = beat_count_q;
     case ({head_pop, in_push})
-      2'b01: beat_count_n = {1'b0, beat_count_q} + 3'd1;
-      2'b10: beat_count_n = {1'b0, beat_count_q} - 3'd1;
+      2'b01: beat_count_n = beat_count_q + 3'd1;
+      2'b10: beat_count_n = beat_count_q - 3'd1;
       default: begin end
     endcase
   end
@@ -83,58 +90,72 @@ module ff_ingress #(
   // bubble when q0 drains while BKPR is high.
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      beat_count_q <= 2'd0;
+      beat_count_q <= 3'd0;
       q0_vld_q     <= 4'b0;
       q1_vld_q     <= 4'b0;
       q2_vld_q     <= 4'b0;
+      q3_vld_q     <= 4'b0;
       bkpr_r       <= 1'b0;
     end else begin
       case ({head_pop, in_push})
         2'b01: begin
           case (beat_count_q)
-            2'd0: q0_vld_q <= in_vld;
-            2'd1: q1_vld_q <= in_vld;
-            2'd2: q2_vld_q <= in_vld;
+            3'd0: q0_vld_q <= s0_vld_q;
+            3'd1: q1_vld_q <= s0_vld_q;
+            3'd2: q2_vld_q <= s0_vld_q;
+            3'd3: q3_vld_q <= s0_vld_q;
             default: begin end
           endcase
-          if (beat_count_q != 2'd3)
-            beat_count_q <= beat_count_q + 2'd1;
+          if (beat_count_q != 3'd4)
+            beat_count_q <= beat_count_q + 3'd1;
         end
         2'b10: begin
           case (beat_count_q)
-            2'd1: q0_vld_q <= 4'b0;
-            2'd2: begin
+            3'd1: q0_vld_q <= 4'b0;
+            3'd2: begin
               q0_vld_q <= q1_vld_q;
               q1_vld_q <= 4'b0;
             end
-            2'd3: begin
+            3'd3: begin
               q0_vld_q <= q1_vld_q;
               q1_vld_q <= q2_vld_q;
               q2_vld_q <= 4'b0;
             end
+            3'd4: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= q2_vld_q;
+              q2_vld_q <= q3_vld_q;
+              q3_vld_q <= 4'b0;
+            end
             default: begin end
           endcase
-          beat_count_q <= beat_count_q - 2'd1;
+          beat_count_q <= beat_count_q - 3'd1;
         end
         2'b11: begin
           case (beat_count_q)
-            2'd1: q0_vld_q <= in_vld;
-            2'd2: begin
+            3'd1: q0_vld_q <= s0_vld_q;
+            3'd2: begin
               q0_vld_q <= q1_vld_q;
-              q1_vld_q <= in_vld;
+              q1_vld_q <= s0_vld_q;
             end
-            2'd3: begin
+            3'd3: begin
               q0_vld_q <= q1_vld_q;
               q1_vld_q <= q2_vld_q;
-              q2_vld_q <= in_vld;
+              q2_vld_q <= s0_vld_q;
+            end
+            3'd4: begin
+              q0_vld_q <= q1_vld_q;
+              q1_vld_q <= q2_vld_q;
+              q2_vld_q <= q3_vld_q;
+              q3_vld_q <= s0_vld_q;
             end
             default: begin end
           endcase
         end
         default: begin end
       endcase
-      bkpr_r <= (beat_count_n >= 3'd2)
-                 || ((beat_count_q != 2'd0) && !admit_i);
+      bkpr_r <= (beat_count_n >= 3'd3)
+                 || ((beat_count_q != 3'd0) && !admit_i);
     end
   end
 
@@ -142,33 +163,45 @@ module ff_ingress #(
     case ({head_pop, in_push})
       2'b01: begin
         case (beat_count_q)
-          2'd0: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd1: begin q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f; end
-          2'd2: begin q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f; end
+          3'd0: begin q0_data_q <= s0_data_q; q0_ctrl_q <= s0_ctrl_q; end
+          3'd1: begin q1_data_q <= s0_data_q; q1_ctrl_q <= s0_ctrl_q; end
+          3'd2: begin q2_data_q <= s0_data_q; q2_ctrl_q <= s0_ctrl_q; end
+          3'd3: begin q3_data_q <= s0_data_q; q3_ctrl_q <= s0_ctrl_q; end
           default: begin end
         endcase
       end
       2'b10: begin
         case (beat_count_q)
-          2'd2: begin q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q; end
-          2'd3: begin
+          3'd2: begin q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q; end
+          3'd3: begin
             q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
             q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+          end
+          3'd4: begin
+            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
+            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+            q2_data_q <= q3_data_q; q2_ctrl_q <= q3_ctrl_q;
           end
           default: begin end
         endcase
       end
       2'b11: begin
         case (beat_count_q)
-          2'd1: begin q0_data_q <= in_data_f; q0_ctrl_q <= in_ctrl_f; end
-          2'd2: begin
+          3'd1: begin q0_data_q <= s0_data_q; q0_ctrl_q <= s0_ctrl_q; end
+          3'd2: begin
             q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
-            q1_data_q <= in_data_f; q1_ctrl_q <= in_ctrl_f;
+            q1_data_q <= s0_data_q; q1_ctrl_q <= s0_ctrl_q;
           end
-          2'd3: begin
+          3'd3: begin
             q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
             q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
-            q2_data_q <= in_data_f; q2_ctrl_q <= in_ctrl_f;
+            q2_data_q <= s0_data_q; q2_ctrl_q <= s0_ctrl_q;
+          end
+          3'd4: begin
+            q0_data_q <= q1_data_q; q0_ctrl_q <= q1_ctrl_q;
+            q1_data_q <= q2_data_q; q1_ctrl_q <= q2_ctrl_q;
+            q2_data_q <= q3_data_q; q2_ctrl_q <= q3_ctrl_q;
+            q3_data_q <= s0_data_q; q3_ctrl_q <= s0_ctrl_q;
           end
           default: begin end
         endcase
@@ -177,9 +210,12 @@ module ff_ingress #(
     endcase
   end
 
-  wire [3:0] in_vld_q = (beat_count_q != 2'd0) ? q0_vld_q : 4'b0;
+  // q0_vld_q is explicitly cleared when the final queued beat is popped, so
+  // the count!=0 qualifier would be redundant logic on the admission path.
+  wire [3:0] in_vld_q = q0_vld_q;
   wire [127:0] in_data_q [0:3];
   wire [4:0]   in_ctrl_q [0:3];
+  genvar gi;
   generate
     for (gi = 0; gi < 4; gi = gi + 1) begin : g_q0
       assign in_data_q[gi] = q0_data_q[gi*128 +: 128];
@@ -189,17 +225,19 @@ module ff_ingress #(
 
 `ifndef SYNTHESIS
   always @(posedge clk) begin
-    if (rst_n && in_push && !head_pop && (beat_count_q == 2'd3))
+    if (rst_n && in_push && !head_pop && (beat_count_q == 3'd4))
       $error("[ff_ingress] elastic input queue overflow @%0t", $time);
-    if (rst_n && (beat_count_q == 2'd0) &&
-        (|q0_vld_q || |q1_vld_q || |q2_vld_q))
+    if (rst_n && (beat_count_q == 3'd0) &&
+        (|q0_vld_q || |q1_vld_q || |q2_vld_q || |q3_vld_q))
       $error("[ff_ingress] nonempty valid state at zero queue count @%0t", $time);
-    if (rst_n && (beat_count_q != 2'd0) && !(|q0_vld_q))
+    if (rst_n && (beat_count_q != 3'd0) && !(|q0_vld_q))
       $error("[ff_ingress] empty queue head at nonzero count @%0t", $time);
-    if (rst_n && (beat_count_q < 2'd2) && |q1_vld_q)
+    if (rst_n && (beat_count_q < 3'd2) && |q1_vld_q)
       $error("[ff_ingress] unexpected first spill valid @%0t", $time);
-    if (rst_n && (beat_count_q < 2'd3) && |q2_vld_q)
+    if (rst_n && (beat_count_q < 3'd3) && |q2_vld_q)
       $error("[ff_ingress] unexpected second spill valid @%0t", $time);
+    if (rst_n && (beat_count_q < 3'd4) && |q3_vld_q)
+      $error("[ff_ingress] unexpected third spill valid @%0t", $time);
   end
 `endif
 

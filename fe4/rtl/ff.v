@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v74
-// Experiment   : E074-R32-ingress-admission
-// Based on     : E068-R32-dynamic-bkpr-credit
-// Changes      : decouple the two-beat input response tail from ROB admission
+// RTL revision : 4FE-safe-v74a
+// Experiment   : E074A-R32-unconditional-input
+// Based on     : E074-R32-ingress-admission
+// Changes      : isolate raw PKTIN behind an unconditional boundary register
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
