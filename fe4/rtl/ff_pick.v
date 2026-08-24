@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_pick - I0 issue selection (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce the picker/ROB window to four 8-entry banks (32 total)
+// RTL revision : 4FE-safe-v79
+// Experiment   : E079-R32-target84-bank-select
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : register a target-bank one-hot beside the target index
 //
 // Per latency class: the two oldest ready candidates are found with
 // hierarchical bank/local priority selection; a packet some dependent is
@@ -38,6 +38,7 @@ module ff_pick #(
   output reg  [NFE-1:0]      pk_v_q,       // registered (I0 -> I1)
   output wire [NFE*AW-1:0]   pk_idx_f,
   output wire [NFE*AW-1:0]   pk_tgt_f,     // target index, I0-retimed for I1
+  output wire [3:0]          pk_tgt1_bank_oh,
   output wire [NFE*2-1:0]    pk_lat_f,
   output wire [NFE*8-1:0]    pk_bank_oh_f,
   output wire [NFE*8-1:0]    pk_local_oh_f,
@@ -311,6 +312,7 @@ module ff_pick #(
   reg [NFE-1:0] pk_v_int;
   reg [AW-1:0]  pk_idx_q [0:NFE-1];
   reg [AW-1:0]  pk_tgt_q [0:NFE-1];
+  reg [3:0]     pk_tgt1_bank_oh_q;
   reg [1:0]     pk_lat_q [0:NFE-1];
   reg [7:0]     pk_bank_oh_q [0:NFE-1];
   reg [7:0]     pk_local_oh_q [0:NFE-1];
@@ -500,6 +502,7 @@ module ff_pick #(
   reg [NFE-1:0] pk_v_n;
   reg [AW-1:0] pk_idx_n [0:NFE-1];
   reg [AW-1:0] pk_tgt_n [0:NFE-1];
+  reg [3:0]    pk_tgt1_bank_oh_n;
   reg [1:0]    pk_lat_n [0:NFE-1];
   reg [7:0]    pk_bank_oh_n [0:NFE-1];
   reg [7:0]    pk_local_oh_n [0:NFE-1];
@@ -547,6 +550,11 @@ module ff_pick #(
       end
     end
   endgenerate
+
+  // The target index remains available for every dependency-data bit.  This
+  // parallel one-hot is consumed only by the single STA-critical bit, so the
+  // other 511 FE dependency-data bits keep E068's compact binary mux.
+  always @* pk_tgt1_bank_oh_n = 4'b0001 << pk_tgt_n[1][4:3];
 
   // Retimed target read.  In the timing-safe profile, use the target payload
   // carried through the hierarchical picker.  This avoids adding a second
@@ -599,7 +607,10 @@ module ff_pick #(
   end
   always @(posedge clk) begin
     for (f = 0; f < NFE; f = f + 1) begin
-      pk_idx_q[f] <= pk_idx_n[f];
+      // pk_idx is meaningful only with the next-cycle valid.  Making that
+      // enable explicit prevents clock-gating from rebuilding a separate
+      // data-change enable through every pk_idx_n bit.
+      if (pk_v_n[f]) pk_idx_q[f] <= pk_idx_n[f];
       // Retiming the dependency target across the existing I0/I1 boundary
       // removes pk_idx_q -> rob_tgt[32:1] from the FE input cycle.  This is
       // unconditional so the picker cone cannot become an ICG-enable path.
@@ -609,6 +620,7 @@ module ff_pick #(
       pk_local_oh_q[f] <= pk_local_oh_n[f];
     end
   end
+  always @(posedge clk) pk_tgt1_bank_oh_q <= pk_tgt1_bank_oh_n;
 
   // record which FE each entry was issued to (result routing)
   reg [1:0] rob_src [0:D-1];
@@ -634,5 +646,6 @@ module ff_pick #(
       assign rob_src_f[gi*2 +: 2] = rob_src[gi];
     end
   endgenerate
+  assign pk_tgt1_bank_oh = pk_tgt1_bank_oh_q;
 
 endmodule

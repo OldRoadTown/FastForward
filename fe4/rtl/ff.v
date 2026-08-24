@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v79
+// Experiment   : E079-R32-target84-bank-select
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : predecode the sole critical dependency-data bank select
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -120,6 +120,7 @@ module ff #(
   wire [NFE-1:0]      pk_v_q;
   wire [NFE*AW-1:0]   pk_idx_f;
   wire [NFE*AW-1:0]   pk_tgt_f;
+  wire [3:0]          pk_tgt1_bank_oh;
   wire [NFE*2-1:0]    pk_lat_f;
   wire [NFE*8-1:0]    pk_bank_oh_f;
   wire [NFE*8-1:0]    pk_local_oh_f;
@@ -184,6 +185,7 @@ module ff #(
     .rbase(old_u[AW-1:0]), .sched_v_f(sched_v_f),
     .picked(picked), .pk_v_q(pk_v_q),
     .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_tgt1_bank_oh(pk_tgt1_bank_oh),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f), .rob_src_f(rob_src_f)
   );
@@ -192,6 +194,7 @@ module ff #(
              .WAKE_BYPASS(WAKE_BYPASS)) u_issue (
     .clk(clk), .rst_n(rst_n),
     .pk_v_q(pk_v_q), .pk_idx_f(pk_idx_f), .pk_tgt_f(pk_tgt_f),
+    .pk_tgt1_bank_oh(pk_tgt1_bank_oh),
     .pk_lat_f(pk_lat_f), .pk_bank_oh_f(pk_bank_oh_f),
     .pk_local_oh_f(pk_local_oh_f),
     .rob_data_f(rob_data_f), .rob_src_f(rob_src_f),

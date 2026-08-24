@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_issue - I1 issue stage (4-FE work-stealing variant)
 //
-// RTL revision : 4FE-safe-v28
-// Experiment   : E029-R32
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : reduce packet/dependency reads from 64 entries to 32 entries
+// RTL revision : 4FE-safe-v79
+// Experiment   : E079-R32-target84-bank-select
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : use a registered bank one-hot on the sole critical data bit
 //
 // Reads packet data / dependency data from the ROB, drives FEIN with the
 // packet's true latency (dynamic because of stealing). dp_data is bypassed
@@ -28,6 +28,7 @@ module ff_issue #(
   input  wire [NFE-1:0]          pk_v_q,
   input  wire [NFE*AW-1:0]       pk_idx_f,
   input  wire [NFE*AW-1:0]       pk_tgt_f,
+  input  wire [3:0]              pk_tgt1_bank_oh,
   input  wire [NFE*2-1:0]        pk_lat_f,
   input  wire [NFE*8-1:0]        pk_bank_oh_f,
   input  wire [NFE*8-1:0]        pk_local_oh_f,
@@ -113,7 +114,17 @@ module ff_issue #(
         // to rob_data one edge before this packet reaches issue.  Reading the
         // retained copy is therefore exact and removes res_now/rob_src/FEOUT
         // selection from the safe-profile FE input timing path.
-        assign fein_dpd[gf] = rob_data[tgt];
+        if (gf == 1) begin : g_sta_bit84
+          wire target_bit84 =
+              (rob_data[{2'd0, tgt[2:0]}][84] & pk_tgt1_bank_oh[0])
+            | (rob_data[{2'd1, tgt[2:0]}][84] & pk_tgt1_bank_oh[1])
+            | (rob_data[{2'd2, tgt[2:0]}][84] & pk_tgt1_bank_oh[2])
+            | (rob_data[{2'd3, tgt[2:0]}][84] & pk_tgt1_bank_oh[3]);
+          assign fein_dpd[gf] = {rob_data[tgt][127:85], target_bit84,
+                                 rob_data[tgt][83:0]};
+        end else begin : g_other_lane
+          assign fein_dpd[gf] = rob_data[tgt];
+        end
       end else begin : g_live_dp
         // Full-throughput profile: a pre-woken packet may enter the FE in the
         // same cycle as its target result and must consume the live FEOUT bus.
