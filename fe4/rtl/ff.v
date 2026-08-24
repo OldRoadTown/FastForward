@@ -1,10 +1,10 @@
 // =============================================================================
 // fast_forward top (4-FE work-stealing variant, integrated) -- Verilog-2001
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v80
+// Experiment   : E080-R32-latency-source-reuse
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : reuse stored latency as the safe-mode result-source tag
 //
 // Score-driven design: score = (1/T)^4 * (1/Power) * (1/Area), Tclk >= 0.4ns.
 // T is the final elapsed execution time of the fixed unified testcase set;
@@ -19,7 +19,7 @@
 //   ff_rob      ROB storage/state (+critical flags), wake-up, counters,
 //               oldest pointer, BKPR
 //   ff_pick     I0: per-class dual pick (parity PEs) + critical-first
-//               priority + work stealing (<=2/cycle) + rob_src record
+//               priority + work stealing (<=2/cycle) + dual-mode rob_src
 //   ff_issue    I1: ROB data/dp read, dynamic-lat FEIN drive (REG_FEIN)
 //   ff_sched    per-FE 4-slot result scheduler (exact output-slot booking)
 //   FE x4        integrated forwarding engines
@@ -155,7 +155,8 @@ module ff #(
     .kw_vld_o(kw_vld), .k_tgt_f(k_tgt_f)
   );
 
-  ff_rob #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_rob (
+  ff_rob #(.D(D), .AW(AW), .SW(SW), .NFE(NFE),
+           .DUAL_STEAL(DUAL_STEAL)) u_rob (
     .clk(clk), .rst_n(rst_n),
     .acnt(acnt), .alloc_oh(alloc_oh),
     .slot_dat_f(slot_dat_f), .slot_lat_f(slot_lat_f), .slot_tgt_f(slot_tgt_f),
@@ -257,11 +258,13 @@ module ff #(
     .fwded_pkt_data(fwded3_pkt_data)
   );
 
-  ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE)) u_egress (
+  ff_egress #(.D(D), .AW(AW), .SW(SW), .NFE(NFE),
+              .DUAL_STEAL(DUAL_STEAL)) u_egress (
     .clk(clk), .rst_n(rst_n),
     .alloc_seq(alloc_seq), .out_seq(out_seq),
     .resv_q(resv_q), .res_now(res_now),
-    .rob_data_f(rob_data_f), .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
+    .rob_data_f(rob_data_f), .rob_lat_f(rob_lat_f),
+    .rob_src_f(rob_src_f), .fe_od_f(fe_od_f),
     .pop_cnt(pop_cnt), .pop_therm(pop_therm),
     .lane_v(lane_v), .lane_d_f(lane_d_f)
   );

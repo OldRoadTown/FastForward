@@ -1,10 +1,10 @@
 // =============================================================================
 // ff_egress - in-order output stage
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : export the natural retirement thermometer as BKPR credit
+// RTL revision : 4FE-safe-v80
+// Experiment   : E080-R32-latency-source-reuse
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : reuse stored latency as the safe-mode result-source tag
 //
 // Pops up to 4 contiguous completed entries starting at out_seq, output lane
 // = seq[1:0] (spec rotating-lane rule -> (D/4):1 mux per lane). A result
@@ -14,7 +14,8 @@ module ff_egress #(
   parameter D   = 32,
   parameter AW  = 5,
   parameter SW  = 6,
-  parameter NFE = 4
+  parameter NFE = 4,
+  parameter DUAL_STEAL = 0
 )(
   input  wire                clk,
   input  wire                rst_n,
@@ -23,7 +24,8 @@ module ff_egress #(
   input  wire [D-1:0]        resv_q,
   input  wire [D-1:0]        res_now,
   input  wire [D*128-1:0]    rob_data_f,
-  input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
+  input  wire [D*2-1:0]      rob_lat_f,
+  input  wire [D*2-1:0]      rob_src_f,
   input  wire [NFE*128-1:0]  fe_od_f,
   output reg  [2:0]          pop_cnt,
   output wire [3:0]          pop_therm,
@@ -33,13 +35,17 @@ module ff_egress #(
 
   // unpack
   wire [127:0] rob_data [0:D-1];
-  wire [1:0]   rob_src  [0:D-1];
+  wire [1:0]   rob_lat   [0:D-1];
+  wire [1:0]   rob_src   [0:D-1];
+  wire [1:0]   result_src [0:D-1];
   wire [127:0] fe_od    [0:NFE-1];
   genvar gi;
   generate
     for (gi = 0; gi < D; gi = gi + 1) begin : g_ur
       assign rob_data[gi] = rob_data_f[gi*128 +: 128];
+      assign rob_lat[gi]  = rob_lat_f[gi*2 +: 2];
       assign rob_src[gi]  = rob_src_f[gi*2 +: 2];
+      assign result_src[gi] = (DUAL_STEAL == 0) ? rob_lat[gi] : rob_src[gi];
     end
     for (gi = 0; gi < NFE; gi = gi + 1) begin : g_uo
       assign fe_od[gi] = fe_od_f[gi*128 +: 128];
@@ -97,7 +103,7 @@ module ff_egress #(
       out_act[l] = ({1'b0, kl} < pop_cnt);
       osrc       = out_seq[AW-1:0] + {{(AW-2){1'b0}}, kl};
       osi        = {osrc[AW-1:2], l[1:0]};   // osrc[1:0]==l by construction
-      out_dat[l] = res_now[osi] ? fe_od[rob_src[osi]] : rob_data[osi];
+      out_dat[l] = res_now[osi] ? fe_od[result_src[osi]] : rob_data[osi];
     end
   end
 

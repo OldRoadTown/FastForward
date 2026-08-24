@@ -2,10 +2,10 @@
 // ff_rob - ROB storage + per-entry state machines, result write-back,
 //          wake-up, sequence counters, oldest-un-issued pointer, BKPR
 //
-// RTL revision : 4FE-safe-v68
-// Experiment   : E068-R32-dynamic-bkpr-credit
-// Based on     : 4FE-safe-v20 / E021-N1
-// Changes      : consume actual retirement/issue progress in the BKPR decision
+// RTL revision : 4FE-safe-v80
+// Experiment   : E080-R32-latency-source-reuse
+// Based on     : E068-R32-dynamic-bkpr-credit
+// Changes      : reuse stored latency as the safe-mode result-source tag
 //
 // Per-entry state: alloc -> (rdy | wtg) -> issued -> resv.
 // The forwarded result overwrites the entry's input data (single 128b reg
@@ -17,7 +17,8 @@ module ff_rob #(
   parameter D   = 32,
   parameter AW  = 5,
   parameter SW  = 6,
-  parameter NFE = 4
+  parameter NFE = 4,
+  parameter DUAL_STEAL = 0
 )(
   input  wire                clk,
   input  wire                rst_n,
@@ -40,7 +41,7 @@ module ff_rob #(
   input  wire [NFE*128-1:0]  fe_od_f,
   // pick / egress feedback
   input  wire [D-1:0]        picked,
-  input  wire [D*2-1:0]      rob_src_f,     // FE each entry was issued to
+  input  wire [D*2-1:0]      rob_src_f,
   input  wire [2:0]          pop_cnt,
   input  wire [3:0]          pop_therm,
   // state exports
@@ -185,6 +186,16 @@ module ff_rob #(
   reg [1:0]    rob_lat   [0:D-1];
   reg [AW-1:0] rob_tgt   [0:D-1];
   reg          rob_isdep [0:D-1];
+  wire [1:0]   result_src [0:D-1];
+
+  // Safe mode binds latency class c to FE c.  Reuse the stored class as the
+  // result source and let synthesis remove the duplicate per-entry FE tags.
+  // Dual-steal mode retains the recorded source because receiver != class.
+  generate
+    for (gi = 0; gi < D; gi = gi + 1) begin : g_result_src
+      assign result_src[gi] = (DUAL_STEAL == 0) ? rob_lat[gi] : rob_src[gi];
+    end
+  endgenerate
 
   reg [D-1:0]  crit_q;                  // some dependent is waiting on this
   reg [D-1:0]  rdy_q;                   // ready, not yet picked
@@ -342,6 +353,7 @@ module ff_rob #(
                           + {2'b0, pop_therm[1]}
                           + {2'b0, pop_therm[2]}
                           + {2'b0, pop_therm[3]};
+  integer src_chk;
   always @(posedge clk) begin
     if (rst_n && (reuse_span_n > (D-7)))
       $error("[ff_rob] unsafe ROB reuse span %0d @%0t", reuse_span_n, $time);
@@ -349,6 +361,12 @@ module ff_rob #(
       $error("[ff_rob] issue credit exceeds old-u advance @%0t", $time);
     if (rst_n && (pop_credit_n != pop_cnt))
       $error("[ff_rob] retirement credit/count mismatch @%0t", $time);
+    if (rst_n && (DUAL_STEAL == 0)) begin
+      for (src_chk = 0; src_chk < NFE; src_chk = src_chk + 1)
+        if (exit_v[src_chk]
+            && (rob_lat[exit_idx[src_chk]] != src_chk[1:0]))
+          $error("[ff_rob] safe FE/latency source mismatch @%0t", $time);
+    end
   end
 `endif
 
@@ -425,7 +443,7 @@ module ff_rob #(
         rob_tgt[e]   <= slot_tgt[e[1:0]];
         rob_isdep[e] <= slot_isdep[e[1:0]];
       end else if (res_now_r[e]) begin
-        rob_data[e] <= fe_od[rob_src[e]];  // unique result source per entry
+        rob_data[e] <= fe_od[result_src[e]];
       end
     end
   end
