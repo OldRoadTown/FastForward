@@ -32,6 +32,7 @@
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-source-reuse | 0 | 0 | 0 | E080；安全模式复用 latency class 作为结果 FE 来源 |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E080 | `ac0de2c05d4627964918893959d38210558b34b3` | rob32-source-reuse | 9070 | 10667 | 24907 | — | — | — | 147394† | — | — | — | 从 E068 RTL 独立派生；`DUAL_STEAL=0` 时 FE 编号恒等于已存的 latency class，因此 ROB 写回与 egress bypass 复用 `rob_lat`，让综合删除 32×2-bit `rob_src` 状态；dual/full 仍保留原 source tag。全部 E068 cycles 逐项不变，新增 FE/class 断言通过。配对 ABC-simple 总 cells 148066→147394（-672，-0.454%），组合 cells 142195→141587，时序状态 5861→5797；NAND/NOT 二次基准 193658→192908，组合深度 30→29。真实 STA/Power/统一 T 待测。 |
 
 ### E066 基线与否决记录
 
@@ -110,6 +112,25 @@
   上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
   `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
+### E080 结果来源复用记录
+
+- 默认 timing-safe 配置禁用 work stealing，每个 entry 的结果始终由其
+  latency class 对应的 FE 返回；因此 `rob_src` 与已有 `rob_lat` 重复。
+  E080 只复用该状态，不增加流水级、不改变 BKPR、picker 或发射策略。
+- 重载 seeds 3/5/7/11/13/17/19/23/29、DEPHEAVY seeds 7/19/41、
+  60k DEPHEAVY、mid、sparse、dual-heavy、full-heavy 全部通过，cycles
+  与 E068 分别保持 9142/9076/9070/9041/9122/9046/8928/9015/9031、
+  15028/14854/14832、44964、10667、24907、9018、7949。
+- 配对综合明确删除 64 个时序单元，并同时减少 608 个 ABC-simple 组合
+  cells；NAND/NOT 门型基准也减少 750，避免依赖单一门型的虚假面积收益。
+  结构深度代理 30→29、深度不小于 20 的端点 300→273，未见时序恶化。
+- 曾隔离测试直接用 `exit_v/exit_idx` 选择返回数据；其 ABC-simple 数量虽
+  大幅下降，但 NAND 基准不降或恶化，故未保留。E080 最终版本保持 E068
+  原有结果数据选择结构，只删除重复来源状态。
+- 64 个 source-tag 触发器及其写入活动消失，构成功耗降低的结构性依据；
+  仓库没有工艺库与 SAIF 功耗流，因此仍须用同一活动文件做真实 Power
+  签核，不能把 cell count 直接当作功耗数值。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -134,5 +155,7 @@
   用于真实 STA/功耗不通过时的低逻辑量回退评估。
 - `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
   完整 E068，仅作为归因与复现实验保留。
+- `codex/e080-e068-area-power`：从 E068 建立；安全模式复用 `rob_lat`
+  删除重复 `rob_src` 状态，dual/full 行为保持不变。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
