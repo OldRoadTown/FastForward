@@ -32,6 +32,7 @@
 | rob32-window | 0 | 0 | 0 | 原始 v28；仅回收经证明安全的 ROB reuse-window credit |
 | rob32-retire-clean | 0 | 0 | 0 | E066；删除冗余退休位图并以 live count 限定退休 |
 | rob32-dynamic-credit | 0 | 0 | 0 | E067；用本拍实际退休/发射推进精确解除 BKPR |
+| rob32-E068-sta-margin | 0 | 0 | 0 | E079；保持 E068 周期，只定点处理真实 STA 零余量路径 |
 
 ## 结果
 
@@ -48,6 +49,7 @@
 | E066 | `87f302b864d63ce7d06b30f47b1c314028f76bed` | rob32-window | 9567 | 10961 | 24907 | — | — | — | 148737* | — | — | — | 从原始 v28 `626413e15bd44c2fbbfea6a22e59d8497101da5a` 直接派生，不包含 E064/E065。将 reuse-window BKPR 阈值 13→17，并把固定 `win > 17` 写成布尔式。九个重载 seed 平均 cycles -7.48%，三个 DEPHEAVY seed 平均 -5.54%；60k DEPHEAVY、dual-heavy、full-heavy 与断言均通过。统一 ABC simple 代理的 low/nom/high 最大 arrival 与 v28 同为 0.8100/0.8875/0.9650 ns，组合 cells 143041→142834、总 cells 148944→148737；但代理关键路径起点及门组成已变化，仍须真实 STA/PPA 和统一用例 T 签核。`*` 为代理 cell count，不是工艺库面积。 |
 | E067 | `a1e8605f224d9eb46b2febb62f0aedab5b261d74` | rob32-retire-clean | 9567 | 10961 | 24907 | — | — | — | 147988† | — | — | — | 从 E066 独立派生；删除 32-bit `outp_q`、`pop_oh` 解码及反馈，以 `alloc_seq-out_seq` live count 防止空 ROB/回绕时退休保留的旧结果。quick、九个重载 seed、三个 DEPHEAVY seed、60k DEPHEAVY、dual/full 与新增退休断言全部通过，所有 cycles 与 E066 完全一致。配对重综合下 low/nom/high 最大 arrival 代理从 0.8100/0.8875/0.9650 ns 降至 0.7950/0.8675/0.9400 ns，关键路径转为 `picked[30] → old_u_n`；总 cells 148338→147988（-0.236%），组合 cells 142435→142117，时序状态位 5893→5861。`†` 为本次配对重综合代理，绝对数不可与 E066 行的旧综合归档直接混算；真实 STA/Power 待测。 |
 | E068 | `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` | rob32-dynamic-credit | 9070 | 10667 | 24907 | — | — | — | 148066† | — | — | — | 从 E067 独立派生；BKPR 不提高固定 23/17 安全阈值，只将本拍实际 `pop_therm` 和最多四项、由 allocation frontier 限定的连续 `iss_eff` 作为 retirement/old-u credit。九个重载 seed 平均 cycles 相对 E066 -5.12%，三个 DEPHEAVY seed -1.94%，mid -2.68%，60k -1.83%，sparse 不变；dual/full seed7 为 9018/7949。low/nom/high 最大 arrival 代理与 E067 同为 0.7950/0.8675/0.9400 ns，低于 E066 上限；关键路径转为 `exit_idx → out_seq_q`。总 cells 较 E067 +78、较配对 E066 -272。所有复用、退休、credit 不超实际进度断言通过；真实 STA/Power/统一 T 待测。 |
+| E079 | `938358d00b6a6a8fa30974c27a86b1d3da842612` | rob32-E068-sta-margin | 9070 | 10667 | 24907 | — | — | — | 148015† | — | — | — | 回到 E068 后只处理真实 STA 的零余量路径：`pk_idx_q` 使用 `pk_v_n` 显式 enable，避免逐数据位反推 ICG enable；仅对 lane1 dependency data bit84 注册 4-bit target-bank one-hot，使原 `pk_tgt_q[1][3] → fwd_dpd_f[212]` 路径在 RTL/门级拓扑上消失。没有新流水级；9 heavy、3 DEPHEAVY、60k、mid/sparse、dual/full cycles 与 E068 完全一致。配对 ABC cells 148066→148015（-0.034%）。`old_u_q[4] → old_u_q[0]` 保持 E068 RTL，交由物理 ECO；真实 STA/Power 待测。 |
 
 ### E066 基线与否决记录
 
@@ -110,6 +112,39 @@
   上述结果仅为同一 Yosys/ABC/Verilator 流程的配对代理，真实
   `0.045 ns` uncertainty 与活动率功耗仍需外部签核。
 
+### E079 E068 零余量定点收敛
+
+- E078 的真实 STA 已确认有较大恶化，故否决其吞吐候选并从 E068
+  `c6092b9185710eaedbcbfcaeee78e3db0e76f6c2` 重新派生 E079；不把 E078
+  的任何入口或流水改动带入本分支。
+- 用户提供的 E068 真实 STA 仅剩三条显示为 `0.0000 ns` 的路径：
+  `rdy_q_reg_16 → pk_idx_q_reg_0_2/CP`（required 0.3491、arrival 报告字段
+  -0.3492），`pk_tgt_q_reg_1_3 → u_fe1/o_data_out_reg_84/D`（required
+  0.3483、arrival 报告字段 -0.3483），以及
+  `old_u_q_reg_4 → old_u_q_reg_0/D`（required 0.3439、arrival 报告字段
+  -0.3439）。数值按收到的报告字段原样记录，需由同一真实 STA 流复测
+  精确未舍入 slack。
+- 第一条路径不增加寄存级：`pk_idx_q` 只在对应的 `pk_v_n` 有效时更新。
+  本地综合中 20 个普通 `pk_idx` 数据寄存位变为 20 个显式 enable
+  寄存位，使 enable 不再由各 `pk_idx_n` 数据位的变化条件分别反推。
+- 第二条只新增 lane1 的 4-bit target-bank one-hot 寄存载荷，并且只替换
+  `fwd_dpd_f[212]` 这一个报告违例位；其余 511 个 dependency-data 位仍用
+  E068 的紧凑 binary read。门级依赖检查中，原起点
+  `pk_tgt_q[1][3]` 不再可达该端点，新的 bank-one-hot 起点只经过
+  AND/OR 汇合。没有无条件新增流水级，也没有增加任何执行周期。
+- 曾尝试用等价 1-bit RTL 副本切开第三条 `old_u` 反馈，但综合器将其与
+  原寄存位合并，门级路径没有变化，故已回退且未提交。该路径只差舍入级
+  余量，优先对 `old_u_q_reg_4` 做寄存器复制/降低扇出、将本地副本放在
+  `old_u_n[0]` 逻辑旁，或做单元尺寸 ECO；不设置 false/multicycle path。
+- E079 的 quick 为 223/276/593；heavy seeds 3/5/7/11/13/17/19/23/29
+  仍为 9142/9076/9070/9041/9122/9046/8928/9015/9031；DEPHEAVY
+  seeds 7/19/41 仍为 15028/14854/14832，60k DEPHEAVY 为 44964，
+  mid/sparse 为 10667/24907，dual/full seed7 为 9018/7949，全部通过。
+- 同一 Yosys/ABC simple 配对综合下，总 cells 148066→148015（-51，
+  -0.034%）；其中仅新增 4 个 one-hot 状态位，`pk_idx` 显式 enable 带来的
+  组合化简抵消其代价。该代理证明逻辑量没有增加，但不能代替真实
+  STA、面积和功耗签核。
+
 ## 分支与提交约定
 
 - `main`：稳定参考，不直接堆实验。
@@ -134,5 +169,7 @@
   用于真实 STA/功耗不通过时的低逻辑量回退评估。
 - `codex/e068b-issue-credit-only`：E068 issue-only 隔离候选；收益弱于
   完整 E068，仅作为归因与复现实验保留。
+- `codex/e079-e068-sta-margin`：从 E068 返回后针对三条零余量真实 STA
+  路径的微创候选；不引入新流水级，真实 STA 未通过前不替换 E068。
 - RTL、验证、文档分开提交。综合结果文档提交引用被测 RTL SHA，
   不通过 amend 改写已经送入内网综合的 RTL 提交。
