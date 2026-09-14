@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img">
+<style>.c-paper-canvas{fill:#fff;stroke:none}.c-paper-boundary{fill:#fff;stroke:#111}.c-paper-red{fill:#f5aaaa;stroke:#111}.c-paper-green{fill:#b9d99f;stroke:#111}.c-paper-blue{fill:#a9cbea;stroke:#111}.c-paper-yellow{fill:#f5ddb0;stroke:#111}.c-paper-gray{fill:#e5e7eb;stroke:#111}.t-paper{fill:#111;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.t-paper-serif{fill:#111;font-family:Georgia,SimSun,serif}.t-paper-muted{fill:#4b5563;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.a-paper{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.a-paper-dashed{stroke:#111;fill:none;stroke-dasharray:10,7;stroke-linejoin:round}.m-paper{fill:#111}</style>
+<g id="paper-improvement-03">
+          <defs>
+            <marker id="paper-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <polygon points="0 0, 10 4, 0 8" class="m-paper"/>
+            </marker>
+          </defs>
+          <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
+          <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
+          <text x="800" y="65" class="t-paper" font-size="31" font-weight="700" text-anchor="middle">关键改进 3 — 删除 outp_q / pop_oh 退休反馈网</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">E067 引入并保留到 E068；out_seq 本身就是第一项未退休序列，live_cnt 足以限定有效 entry</text>
+
+          <!-- Before wires -->
+          <path d="M190 245 L245 245" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M190 335 L220 335 L220 275 L245 275" class="a-paper" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <path d="M190 470 L215 470 L215 290 L245 290" class="a-paper" stroke-width="2.5"/>
+          <path d="M295 265 L350 265" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M470 265 L510 265" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M590 265 L610 265 L610 375 L500 375" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M600 410 L625 410" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M665 410 L680 410 L680 500 L600 500" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M600 530 L200 530 L200 470 L190 470" class="a-paper-dashed" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <path d="M720 420 L880 420" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- After wires -->
+          <path d="M990 235 L1050 260" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M990 335 L1050 300" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1160 280 L1220 280" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M990 450 L1180 450 L1180 330 L1220 330" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1350 305 L1390 305" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1480 305 L1520 305" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1435 365 L1435 500 L1260 500" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1180 535 L1050 535 L1050 335" class="a-paper-dashed" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Before panel -->
+          <rect x="60" y="130" width="660" height="600" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="390" y="170" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">E066：每 entry 保存“已退休”状态</text>
+          <text x="390" y="197" class="t-paper-muted" font-size="14" text-anchor="middle">完成检查、one-hot 译码和 32-bit 状态更新形成闭环</text>
+
+          <rect x="90" y="215" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="215" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="241" class="t-paper-serif" font-size="17" text-anchor="middle">cmpl</text>
+          <text x="140" y="262" class="t-paper-muted" font-size="12" text-anchor="middle">resv | res_now</text>
+          <rect x="90" y="305" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="305" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="331" class="t-paper-serif" font-size="17" text-anchor="middle">oidx0..3</text>
+          <text x="140" y="352" class="t-paper-muted" font-size="12" text-anchor="middle">out_seq + k</text>
+          <rect x="90" y="440" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="440" width="100" height="60" class="c-paper-red" stroke-width="2.3"/>
+          <text x="140" y="466" class="t-paper-serif" font-size="17" text-anchor="middle">outp_q</text>
+          <text x="140" y="487" class="t-paper-muted" font-size="12" text-anchor="middle">32 DFF</text>
+
+          <circle cx="270" cy="265" r="25" class="c-paper-canvas"/>
+          <circle cx="270" cy="265" r="25" class="c-paper-red" stroke-width="2.5"/>
+          <text x="270" y="273" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">&amp;</text>
+          <text x="270" y="310" class="t-paper-muted" font-size="12" text-anchor="middle">cmpl &amp; ~outp</text>
+
+          <rect x="350" y="215" width="120" height="100" class="c-paper-canvas"/>
+          <rect x="350" y="215" width="120" height="100" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="410" y="245" class="t-paper-serif" font-size="18" text-anchor="middle">Contiguous</text>
+          <text x="410" y="268" class="t-paper-serif" font-size="18" text-anchor="middle">can0..3</text>
+          <text x="410" y="294" class="t-paper-muted" font-size="12" text-anchor="middle">nested AND chain</text>
+
+          <rect x="510" y="225" width="80" height="80" class="c-paper-canvas"/>
+          <rect x="510" y="225" width="80" height="80" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="550" y="256" class="t-paper-serif" font-size="17" text-anchor="middle">pop_cnt</text>
+          <text x="550" y="282" class="t-paper" font-size="15" text-anchor="middle">0..4</text>
+
+          <rect x="500" y="340" width="100" height="70" class="c-paper-canvas"/>
+          <rect x="500" y="340" width="100" height="70" class="c-paper-red" stroke-width="2.3"/>
+          <text x="550" y="368" class="t-paper-serif" font-size="17" text-anchor="middle">DEC3→32</text>
+          <text x="550" y="392" class="t-paper" font-size="14" text-anchor="middle">pop_oh</text>
+          <circle cx="645" cy="410" r="20" class="c-paper-canvas"/>
+          <circle cx="645" cy="410" r="20" class="c-paper-red" stroke-width="2.3"/>
+          <text x="645" y="417" class="t-paper" font-size="18" font-weight="700" text-anchor="middle">OR</text>
+          <rect x="600" y="470" width="90" height="60" class="c-paper-canvas"/>
+          <rect x="600" y="470" width="90" height="60" class="c-paper-red" stroke-width="2.3"/>
+          <text x="645" y="496" class="t-paper-serif" font-size="17" text-anchor="middle">DFF ×32</text>
+          <text x="645" y="517" class="t-paper-muted" font-size="12" text-anchor="middle">outp_q next</text>
+          <text x="390" y="625" class="t-paper-muted" font-size="14" text-anchor="middle">关键冗余：out_seq 已经前进，却仍维护同一退休事实的 32-bit 副本</text>
+
+          <!-- After panel -->
+          <rect x="880" y="130" width="660" height="600" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="1210" y="170" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">E067 / E068：用 live_cnt 限定有效退休项</text>
+          <text x="1210" y="197" class="t-paper-muted" font-size="14" text-anchor="middle">不再保存 popped bitmap，也不再产生 32-bit pop_oh</text>
+
+          <rect x="910" y="205" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="205" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="231" class="t-paper-serif" font-size="16" text-anchor="middle">alloc_seq</text>
+          <text x="950" y="252" class="t-paper-muted" font-size="12" text-anchor="middle">frontier</text>
+          <rect x="910" y="305" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="305" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="331" class="t-paper-serif" font-size="16" text-anchor="middle">out_seq</text>
+          <text x="950" y="352" class="t-paper-muted" font-size="12" text-anchor="middle">retire head</text>
+          <rect x="1050" y="240" width="110" height="80" class="c-paper-canvas"/>
+          <rect x="1050" y="240" width="110" height="80" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1105" y="271" class="t-paper-serif" font-size="18" text-anchor="middle">SUB6</text>
+          <text x="1105" y="296" class="t-paper" font-size="14" text-anchor="middle">live_cnt</text>
+
+          <rect x="910" y="420" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="420" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="446" class="t-paper-serif" font-size="17" text-anchor="middle">cmpl</text>
+          <text x="950" y="467" class="t-paper-muted" font-size="12" text-anchor="middle">result ready</text>
+
+          <rect x="1220" y="245" width="130" height="120" class="c-paper-canvas"/>
+          <rect x="1220" y="245" width="130" height="120" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="1285" y="275" class="t-paper-serif" font-size="18" text-anchor="middle">4 fixed checks</text>
+          <text x="1285" y="303" class="t-paper" font-size="14" text-anchor="middle">live_cnt &gt; k</text>
+          <text x="1285" y="328" class="t-paper" font-size="14" text-anchor="middle">AND cmpl[oidxk]</text>
+          <text x="1285" y="350" class="t-paper-muted" font-size="12" text-anchor="middle">k = 0..3</text>
+
+          <rect x="1390" y="250" width="90" height="115" class="c-paper-canvas"/>
+          <rect x="1390" y="250" width="90" height="115" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1435" y="281" class="t-paper-serif" font-size="17" text-anchor="middle">Thermometer</text>
+          <text x="1435" y="308" class="t-paper" font-size="14" text-anchor="middle">can0..3</text>
+          <text x="1435" y="334" class="t-paper" font-size="14" text-anchor="middle">→ pop_cnt</text>
+          <text x="1435" y="353" class="t-paper-muted" font-size="11" text-anchor="middle">E068 exports pop_therm</text>
+
+          <rect x="1180" y="500" width="160" height="70" class="c-paper-canvas"/>
+          <rect x="1180" y="500" width="160" height="70" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1260" y="528" class="t-paper-serif" font-size="17" text-anchor="middle">ADD6 + DFF</text>
+          <text x="1260" y="552" class="t-paper" font-size="14" text-anchor="middle">out_seq += pop_cnt</text>
+
+          <rect x="1040" y="610" width="390" height="70" class="c-paper-canvas"/>
+          <rect x="1040" y="610" width="390" height="70" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1235" y="638" class="t-paper-serif" font-size="18" text-anchor="middle">Removed completely</text>
+          <text x="1235" y="663" class="t-paper" font-size="15" text-anchor="middle">32× outp_q DFF + DEC3→32 pop_oh + OR/AND feedback cone</text>
+
+        </g>
+</svg>

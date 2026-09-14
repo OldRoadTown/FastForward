@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<style>.c-paper-canvas{fill:#fff;stroke:none}.c-paper-boundary{fill:#fff;stroke:#111}.c-paper-io{fill:#a9cbea;stroke:#111}.c-paper-front{fill:#f5aaaa;stroke:#111}.c-paper-store{fill:#b9d99f;stroke:#111}.c-paper-select{fill:#f5ddb0;stroke:#111}.c-paper-control{fill:#bed7ec;stroke:#111}.c-paper-fe{fill:#d5e8b8;stroke:#111}.c-paper-bkpr{fill:#f1b2b2;stroke:#111}.t-paper{fill:#111;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.t-paper-serif{fill:#111;font-family:Georgia,SimSun,serif}.t-paper-muted{fill:#4b5563;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.a-paper{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.a-paper-control{stroke:#111;fill:none;stroke-dasharray:9,7;stroke-linejoin:round}.m-paper{fill:#111}</style>
+<g id="paper-overall-architecture">
+          <defs>
+            <marker id="paper-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <polygon points="0 0, 10 4, 0 8" class="m-paper"/>
+            </marker>
+          </defs>
+
+          <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
+          <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
+          <text x="800" y="65" class="t-paper" font-size="32" font-weight="700" text-anchor="middle">FastForward E080 总体架构</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">ROB32，4 个 Forwarding Engine，乱序发射，按序退休；E080 保持 E068 控制与数据通路</text>
+
+          <!-- Main packet/data path -->
+          <path d="M190 350 L240 350" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M440 350 L510 350" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M630 245 L630 165 L800 165" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M980 165 L1035 165" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M750 300 L930 300 L930 220 L1035 220" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1215 165 L1260 165 L1260 320 L1320 320" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M630 475 L630 710 L900 710" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1430 460 L1430 610 L1010 610 L1010 650" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1120 710 L1360 710" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Scheduling and completion control -->
+          <path d="M1125 230 L1125 430" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1035 460 L900 460 L900 220" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1035 505 L790 505 L790 390 L750 390" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1320 400 L1280 400 L1280 575 L780 575 L780 420 L750 420" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Retirement, wake and backpressure feedback -->
+          <path d="M900 735 L825 735 L825 520 L690 520 L690 475" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M510 280 L470 280 L470 260 L340 260 L340 285" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M510 435 L430 435 L430 560 L195 560" class="a-paper-control" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Global clock/reset bus -->
+          <path d="M195 807 L1510 807" class="a-paper-control" stroke-width="2.4"/>
+          <path d="M340 807 L340 415" class="a-paper-control" stroke-width="1.8"/>
+          <path d="M570 807 L570 475" class="a-paper-control" stroke-width="1.8"/>
+          <path d="M860 807 L860 220" class="a-paper-control" stroke-width="1.8"/>
+          <path d="M1080 807 L1080 550" class="a-paper-control" stroke-width="1.8"/>
+          <path d="M1380 807 L1380 460" class="a-paper-control" stroke-width="1.8"/>
+
+          <!-- External I/O -->
+          <rect x="55" y="315" width="135" height="70" class="c-paper-canvas"/>
+          <rect x="55" y="315" width="135" height="70" class="c-paper-io" stroke-width="2.5"/>
+          <text x="122.5" y="344" class="t-paper-serif" font-size="20" text-anchor="middle">PKTIN ×4</text>
+          <text x="122.5" y="366" class="t-paper-muted" font-size="12" text-anchor="middle">vld · data · ctrl</text>
+
+          <rect x="1360" y="675" width="180" height="70" class="c-paper-canvas"/>
+          <rect x="1360" y="675" width="180" height="70" class="c-paper-io" stroke-width="2.5"/>
+          <text x="1450" y="704" class="t-paper-serif" font-size="20" text-anchor="middle">PKTOUT ×4</text>
+          <text x="1450" y="727" class="t-paper-muted" font-size="12" text-anchor="middle">registered vld · data</text>
+
+          <rect x="55" y="530" width="140" height="60" class="c-paper-canvas"/>
+          <rect x="55" y="530" width="140" height="60" class="c-paper-bkpr" stroke-width="2.5"/>
+          <text x="125" y="554" class="t-paper-serif" font-size="19" text-anchor="middle">Backpressure</text>
+          <text x="125" y="576" class="t-paper-muted" font-size="12" text-anchor="middle">pkt_in_bkpr</text>
+
+          <rect x="55" y="785" width="140" height="45" class="c-paper-canvas"/>
+          <rect x="55" y="785" width="140" height="45" class="c-paper-io" stroke-width="2.5"/>
+          <text x="125" y="813" class="t-paper-serif" font-size="18" text-anchor="middle">clk · rst_n</text>
+
+          <!-- Pipeline modules -->
+          <rect x="240" y="285" width="200" height="130" class="c-paper-canvas"/>
+          <rect x="240" y="285" width="200" height="130" class="c-paper-front" stroke-width="2.8"/>
+          <text x="340" y="318" class="t-paper-serif" font-size="23" text-anchor="middle">ff_ingress</text>
+          <text x="340" y="344" class="t-paper" font-size="14" text-anchor="middle">S0 / S1</text>
+          <text x="340" y="369" class="t-paper-muted" font-size="13" text-anchor="middle">input registers + compact</text>
+          <text x="340" y="390" class="t-paper-muted" font-size="13" text-anchor="middle">dependency resolve + allocate</text>
+
+          <rect x="510" y="245" width="240" height="230" class="c-paper-canvas"/>
+          <rect x="510" y="245" width="240" height="230" class="c-paper-store" stroke-width="3"/>
+          <text x="630" y="283" class="t-paper-serif" font-size="25" text-anchor="middle">ff_rob</text>
+          <text x="630" y="310" class="t-paper" font-size="15" text-anchor="middle">32-entry unified ROB</text>
+          <line x1="530" y1="326" x2="730" y2="326" class="a-paper" stroke-width="1.7"/>
+          <text x="630" y="354" class="t-paper-muted" font-size="13" text-anchor="middle">packet data + attributes</text>
+          <text x="630" y="377" class="t-paper-muted" font-size="13" text-anchor="middle">ready / wait / result / critical</text>
+          <text x="630" y="400" class="t-paper-muted" font-size="13" text-anchor="middle">wake-up + result writeback</text>
+          <text x="630" y="423" class="t-paper-muted" font-size="13" text-anchor="middle">alloc / output / oldest pointers</text>
+          <text x="630" y="450" class="t-paper" font-size="13" text-anchor="middle">E068 dynamic BKPR credit</text>
+
+          <rect x="800" y="110" width="180" height="110" class="c-paper-canvas"/>
+          <rect x="800" y="110" width="180" height="110" class="c-paper-select" stroke-width="2.8"/>
+          <text x="890" y="143" class="t-paper-serif" font-size="22" text-anchor="middle">ff_pick</text>
+          <text x="890" y="169" class="t-paper" font-size="14" text-anchor="middle">I0 · 4 latency classes</text>
+          <text x="890" y="194" class="t-paper-muted" font-size="13" text-anchor="middle">oldest + critical-first</text>
+          <text x="890" y="212" class="t-paper-muted" font-size="11" text-anchor="middle">timing-safe: no stealing</text>
+
+          <rect x="1035" y="110" width="180" height="120" class="c-paper-canvas"/>
+          <rect x="1035" y="110" width="180" height="120" class="c-paper-select" stroke-width="2.8"/>
+          <text x="1125" y="143" class="t-paper-serif" font-size="22" text-anchor="middle">ff_issue</text>
+          <text x="1125" y="169" class="t-paper" font-size="14" text-anchor="middle">I1 · banked ROB read</text>
+          <text x="1125" y="194" class="t-paper-muted" font-size="13" text-anchor="middle">packet / dependency data</text>
+          <text x="1125" y="214" class="t-paper-muted" font-size="13" text-anchor="middle">drive FEIN ×4</text>
+
+          <rect x="1035" y="430" width="180" height="120" class="c-paper-canvas"/>
+          <rect x="1035" y="430" width="180" height="120" class="c-paper-control" stroke-width="2.8"/>
+          <text x="1125" y="463" class="t-paper-serif" font-size="22" text-anchor="middle">ff_sched</text>
+          <text x="1125" y="490" class="t-paper" font-size="14" text-anchor="middle">4 slots per FE</text>
+          <text x="1125" y="516" class="t-paper-muted" font-size="13" text-anchor="middle">exact result-slot booking</text>
+          <text x="1125" y="537" class="t-paper-muted" font-size="12" text-anchor="middle">exit / pre tags</text>
+
+          <!-- Four forwarding engines shown explicitly inside one array -->
+          <rect x="1320" y="250" width="220" height="210" class="c-paper-canvas"/>
+          <rect x="1320" y="250" width="220" height="210" class="c-paper-fe" stroke-width="3"/>
+          <text x="1430" y="280" class="t-paper-serif" font-size="22" text-anchor="middle">Forwarding Engines</text>
+          <rect x="1340" y="296" width="180" height="31" class="c-paper-canvas"/>
+          <rect x="1340" y="296" width="180" height="31" class="c-paper-store" stroke-width="1.8"/>
+          <text x="1430" y="317" class="t-paper" font-size="14" text-anchor="middle">FE0</text>
+          <rect x="1340" y="335" width="180" height="31" class="c-paper-canvas"/>
+          <rect x="1340" y="335" width="180" height="31" class="c-paper-store" stroke-width="1.8"/>
+          <text x="1430" y="356" class="t-paper" font-size="14" text-anchor="middle">FE1</text>
+          <rect x="1340" y="374" width="180" height="31" class="c-paper-canvas"/>
+          <rect x="1340" y="374" width="180" height="31" class="c-paper-store" stroke-width="1.8"/>
+          <text x="1430" y="395" class="t-paper" font-size="14" text-anchor="middle">FE2</text>
+          <rect x="1340" y="413" width="180" height="31" class="c-paper-canvas"/>
+          <rect x="1340" y="413" width="180" height="31" class="c-paper-store" stroke-width="1.8"/>
+          <text x="1430" y="434" class="t-paper" font-size="14" text-anchor="middle">FE3</text>
+
+          <rect x="900" y="650" width="220" height="120" class="c-paper-canvas"/>
+          <rect x="900" y="650" width="220" height="120" class="c-paper-front" stroke-width="2.8"/>
+          <text x="1010" y="683" class="t-paper-serif" font-size="22" text-anchor="middle">ff_egress</text>
+          <text x="1010" y="709" class="t-paper" font-size="14" text-anchor="middle">retire ≤ 4 contiguous entries</text>
+          <text x="1010" y="735" class="t-paper-muted" font-size="13" text-anchor="middle">in-order + rotating lanes</text>
+          <text x="1010" y="756" class="t-paper-muted" font-size="12" text-anchor="middle">same-cycle FEOUT bypass</text>
+
+          <!-- Signal labels -->
+          <text x="215" y="305" class="t-paper" font-size="12" text-anchor="middle">in_vld / data / ctrl</text>
+          <text x="474" y="337" class="t-paper" font-size="12" text-anchor="middle">alloc slots</text>
+          <text x="705" y="150" class="t-paper" font-size="12" text-anchor="middle">rdy · crit · lat · tgt · old_u</text>
+          <text x="1007" y="151" class="t-paper" font-size="12" text-anchor="middle">pk_*</text>
+          <text x="955" y="289" class="t-paper" font-size="12" text-anchor="middle">ROB data / dep / src</text>
+          <text x="1250" y="151" class="t-paper" font-size="12" text-anchor="middle">FEIN ×4</text>
+          <text x="1144" y="335" class="t-paper-muted" font-size="12">issue tag / latency</text>
+          <text x="914" y="450" class="t-paper-muted" font-size="12">sched_v_f</text>
+          <text x="844" y="493" class="t-paper-muted" font-size="12">exit / pre index</text>
+          <text x="1040" y="564" class="t-paper" font-size="12" text-anchor="middle">FEOUT result + data</text>
+          <text x="730" y="697" class="t-paper" font-size="12" text-anchor="middle">resv · data · src · out_seq</text>
+          <text x="1194" y="598" class="t-paper" font-size="12" text-anchor="middle">same-cycle FEOUT bypass</text>
+          <text x="1238" y="697" class="t-paper" font-size="12" text-anchor="middle">lane_v / lane_data</text>
+          <text x="755" y="546" class="t-paper-muted" font-size="12" text-anchor="middle">pop_cnt / pop_therm</text>
+          <text x="405" y="247" class="t-paper-muted" font-size="12" text-anchor="middle">res_known</text>
+          <text x="320" y="548" class="t-paper-muted" font-size="12" text-anchor="middle">pkt_in_bkpr</text>
+          <text x="850" y="829" class="t-paper-muted" font-size="12" text-anchor="middle">clock / reset distributed to all sequential modules</text>
+
+          <!-- Minimal line legend -->
+          <line x1="1190" y1="827" x2="1245" y2="827" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <text x="1255" y="832" class="t-paper-muted" font-size="12">packet / data</text>
+          <line x1="1365" y1="827" x2="1420" y2="827" class="a-paper-control" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <text x="1430" y="832" class="t-paper-muted" font-size="12">control / tag</text>
+        </g>
+</svg>

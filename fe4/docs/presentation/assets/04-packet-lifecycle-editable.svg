@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .bg{fill:#fff;stroke:none}.frame{fill:#fff;stroke:#111}.blue{fill:#a9cbea;stroke:#111}.red{fill:#f5aaaa;stroke:#111}.green{fill:#b9d99f;stroke:#111}.yellow{fill:#f5ddb0;stroke:#111}.gray{fill:#e5e7eb;stroke:#111}
+    .wire{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#111;fill:none;stroke-dasharray:10 7;stroke-linejoin:round}.title{fill:#111;font:700 34px Arial,"Microsoft YaHei",sans-serif}.head{fill:#111;font:700 22px Arial,"Microsoft YaHei",sans-serif}.body{fill:#111;font:17px Arial,"Microsoft YaHei",sans-serif}.small{fill:#4b5563;font:13px Arial,"Microsoft YaHei",sans-serif}.serif{fill:#111;font:20px Georgia,SimSun,serif}.mono{fill:#111;font:16px "Courier New",monospace}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#111"/></marker></defs>
+  <rect width="1600" height="900" class="bg"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="72" class="title" text-anchor="middle">Packet 完整处理流程</text>
+  <text x="800" y="104" class="small" text-anchor="middle">输入打拍、ROB 分配、乱序发射、结果写回和按序输出</text>
+
+  <!-- Main data path -->
+  <path d="M175 285 L225 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M285 285 L335 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M500 285 L550 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M730 285 L780 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M930 285 L980 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M1040 285 L1090 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M1240 285 L1290 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <path d="M1450 285 L1510 285" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+
+  <!-- Feedback paths -->
+  <path d="M1165 365 L1165 485 L640 485 L640 380" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1370 365 L1370 555 L640 555 L640 390" class="dash" stroke-width="2.8" marker-end="url(#arrow)"/>
+  <path d="M640 390 L640 650 L410 650 L410 365" class="dash" stroke-width="2.8" marker-end="url(#arrow)"/>
+
+  <!-- Inputs and stages -->
+  <rect x="65" y="245" width="110" height="80" class="blue" stroke-width="2.5"/>
+  <text x="120" y="278" class="serif" text-anchor="middle">PKTIN ×4</text>
+  <text x="120" y="305" class="small" text-anchor="middle">vld, data, ctrl</text>
+
+  <rect x="225" y="220" width="60" height="130" class="green" stroke-width="2.5"/>
+  <text x="255" y="274" class="head" text-anchor="middle">S0</text>
+  <text x="255" y="304" class="small" text-anchor="middle">DFF</text>
+  <text x="255" y="329" class="small" text-anchor="middle">无条件打拍</text>
+
+  <rect x="335" y="205" width="165" height="160" class="red" stroke-width="2.7"/>
+  <text x="417" y="241" class="head" text-anchor="middle">S1 Ingress</text>
+  <text x="417" y="278" class="body" text-anchor="middle">压缩有效输入</text>
+  <text x="417" y="309" class="body" text-anchor="middle">依赖判断</text>
+  <text x="417" y="340" class="body" text-anchor="middle">分配 ROB entry</text>
+
+  <rect x="550" y="190" width="180" height="190" class="green" stroke-width="3"/>
+  <text x="640" y="230" class="head" text-anchor="middle">ROB32</text>
+  <text x="640" y="267" class="body" text-anchor="middle">packet 与属性</text>
+  <text x="640" y="299" class="body" text-anchor="middle">ready / wait / result</text>
+  <text x="640" y="331" class="body" text-anchor="middle">alloc / old_u / out</text>
+  <text x="640" y="360" class="small" text-anchor="middle">统一状态中心</text>
+
+  <rect x="780" y="205" width="150" height="160" class="yellow" stroke-width="2.7"/>
+  <text x="855" y="241" class="head" text-anchor="middle">I0 Pick</text>
+  <text x="855" y="278" class="body" text-anchor="middle">ready 与 class</text>
+  <text x="855" y="309" class="body" text-anchor="middle">age 与 critical</text>
+  <text x="855" y="340" class="small" text-anchor="middle">每类选择 1 项</text>
+
+  <rect x="980" y="220" width="60" height="130" class="green" stroke-width="2.5"/>
+  <text x="1010" y="274" class="head" text-anchor="middle">I0</text>
+  <text x="1010" y="304" class="small" text-anchor="middle">DFF</text>
+  <text x="1010" y="329" class="small" text-anchor="middle">pick fields</text>
+
+  <rect x="1090" y="205" width="150" height="160" class="yellow" stroke-width="2.7"/>
+  <text x="1165" y="241" class="head" text-anchor="middle">I1 Issue</text>
+  <text x="1165" y="278" class="body" text-anchor="middle">读取 packet</text>
+  <text x="1165" y="309" class="body" text-anchor="middle">读取 dp data</text>
+  <text x="1165" y="340" class="small" text-anchor="middle">驱动 FEIN ×4</text>
+
+  <rect x="1290" y="205" width="160" height="160" class="green" stroke-width="3"/>
+  <text x="1370" y="241" class="head" text-anchor="middle">FE0..3</text>
+  <text x="1370" y="280" class="body" text-anchor="middle">执行转发计算</text>
+  <text x="1370" y="315" class="body" text-anchor="middle">按 latency 返回</text>
+  <text x="1370" y="344" class="small" text-anchor="middle">FEOUT ×4</text>
+
+  <rect x="1510" y="245" width="55" height="80" class="blue" stroke-width="2.5"/>
+  <text x="1537" y="276" class="serif" font-size="14" text-anchor="middle">FE</text>
+  <text x="1537" y="303" class="small" text-anchor="middle">OUT×4</text>
+
+  <!-- Supporting functions -->
+  <rect x="910" y="485" width="230" height="95" class="blue" stroke-width="2.5"/>
+  <text x="1025" y="520" class="head" text-anchor="middle">Result Scheduler</text>
+  <text x="1025" y="551" class="body" text-anchor="middle">4 槽到期记账</text>
+  <text x="1025" y="573" class="small" text-anchor="middle">exit / pre index</text>
+
+  <rect x="1220" y="485" width="300" height="95" class="red" stroke-width="2.5"/>
+  <text x="1370" y="520" class="head" text-anchor="middle">Result Writeback</text>
+  <text x="1370" y="551" class="body" text-anchor="middle">FEOUT 写回 ROB</text>
+  <text x="1370" y="573" class="small" text-anchor="middle">结果可同拍旁路给 egress</text>
+
+  <rect x="520" y="650" width="770" height="95" class="green" stroke-width="2.7"/>
+  <text x="905" y="687" class="head" text-anchor="middle">In-order Retirement</text>
+  <text x="905" y="719" class="body" text-anchor="middle">从 out_seq 连续检查最多 4 项，按 seq[1:0] 映射输出 lane，并寄存 PKTOUT</text>
+  <path d="M1290 697 L1340 697" class="wire" stroke-width="3.5" marker-end="url(#arrow)"/>
+  <rect x="1340" y="655" width="180" height="85" class="blue" stroke-width="2.5"/>
+  <text x="1430" y="689" class="serif" text-anchor="middle">PKTOUT ×4</text>
+  <text x="1430" y="718" class="small" text-anchor="middle">registered vld, data</text>
+
+  <text x="800" y="810" class="small" text-anchor="middle">实线表示 packet 或结果数据，虚线表示调度、依赖和退休控制</text>
+</svg>

@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img">
+<style>.c-paper-canvas{fill:#fff;stroke:none}.c-paper-boundary{fill:#fff;stroke:#111}.c-paper-red{fill:#f5aaaa;stroke:#111}.c-paper-green{fill:#b9d99f;stroke:#111}.c-paper-blue{fill:#a9cbea;stroke:#111}.c-paper-yellow{fill:#f5ddb0;stroke:#111}.c-paper-gray{fill:#e5e7eb;stroke:#111}.t-paper{fill:#111;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.t-paper-serif{fill:#111;font-family:Georgia,SimSun,serif}.t-paper-muted{fill:#4b5563;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.a-paper{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.a-paper-dashed{stroke:#111;fill:none;stroke-dasharray:10,7;stroke-linejoin:round}.m-paper{fill:#111}</style>
+<g id="paper-improvement-02">
+          <defs>
+            <marker id="paper-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <polygon points="0 0, 10 4, 0 8" class="m-paper"/>
+            </marker>
+          </defs>
+          <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
+          <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
+          <text x="800" y="65" class="t-paper" font-size="31" font-weight="700" text-anchor="middle">关键改进 2 — 安全复用窗口 13 → 17</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">E066 引入并保留到 E068；释放 4 个 ROB window 名额，同时避免通用比较器进入 BKPR 寄存器路径</text>
+
+          <!-- Before wires -->
+          <path d="M190 255 L250 255" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M190 380 L220 380 L220 285 L250 285" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M350 270 L405 270" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M505 270 L555 270" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M635 270 L655 270 L655 350" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M190 500 L560 500 L560 385 L635 385" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M675 370 L690 370" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M720 420 L880 420" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- After wires: fixed bit logic for win > 17 -->
+          <path d="M990 255 L1265 255 L1265 285 L1300 285" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M990 325 L1040 325" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1080 325 L1135 325" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M990 395 L1100 395 L1100 355 L1135 355" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1185 340 L1300 315" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1345 300 L1375 300 L1375 430" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M990 510 L1240 510 L1240 465 L1345 465" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1385 450 L1420 450" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Before panel -->
+          <rect x="60" y="135" width="660" height="555" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="390" y="175" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">v28：保守阈值 + 通用比较</text>
+          <text x="390" y="202" class="t-paper-muted" font-size="14" text-anchor="middle">允许的 issue window 仅 13 项</text>
+
+          <rect x="90" y="225" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="225" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="250" class="t-paper-serif" font-size="17" text-anchor="middle">alloc_seq</text>
+          <text x="140" y="271" class="t-paper-muted" font-size="12" text-anchor="middle">+ acnt</text>
+          <rect x="90" y="350" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="350" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="376" class="t-paper-serif" font-size="17" text-anchor="middle">old_u_q</text>
+          <text x="140" y="397" class="t-paper-muted" font-size="12" text-anchor="middle">oldest unissued</text>
+          <rect x="250" y="235" width="100" height="70" class="c-paper-canvas"/>
+          <rect x="250" y="235" width="100" height="70" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="300" y="263" class="t-paper-serif" font-size="17" text-anchor="middle">SUB6</text>
+          <text x="300" y="287" class="t-paper-muted" font-size="12" text-anchor="middle">alloc_nxt-old_u</text>
+          <rect x="405" y="235" width="100" height="70" class="c-paper-canvas"/>
+          <rect x="405" y="235" width="100" height="70" class="c-paper-red" stroke-width="2.3"/>
+          <text x="455" y="263" class="t-paper-serif" font-size="17" text-anchor="middle">win[5:0]</text>
+          <text x="455" y="287" class="t-paper-muted" font-size="12" text-anchor="middle">raw window</text>
+          <rect x="555" y="230" width="80" height="80" class="c-paper-canvas"/>
+          <rect x="555" y="230" width="80" height="80" class="c-paper-red" stroke-width="2.5"/>
+          <text x="595" y="263" class="t-paper-serif" font-size="18" text-anchor="middle">CMP6</text>
+          <text x="595" y="289" class="t-paper" font-size="16" text-anchor="middle">&gt; 13</text>
+          <circle cx="655" cy="370" r="20" class="c-paper-canvas"/>
+          <circle cx="655" cy="370" r="20" class="c-paper-red" stroke-width="2.5"/>
+          <text x="655" y="377" class="t-paper" font-size="18" font-weight="700" text-anchor="middle">OR</text>
+          <rect x="690" y="335" width="15" height="70" class="c-paper-canvas"/>
+          <rect x="690" y="335" width="15" height="70" class="c-paper-green" stroke-width="2.3"/>
+          <text x="620" y="490" class="t-paper-muted" font-size="13" text-anchor="middle">other input: occ &gt; 23</text>
+          <text x="620" y="540" class="t-paper-serif" font-size="18" text-anchor="middle">bkpr_r DFF</text>
+          <text x="390" y="620" class="t-paper-muted" font-size="14" text-anchor="middle">过度保守：ROB 中仍有安全空间时也会提前反压</text>
+
+          <!-- After panel -->
+          <rect x="880" y="135" width="660" height="555" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="1210" y="175" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">E066 / E068：阈值 17 + 固定布尔式</text>
+          <text x="1210" y="202" class="t-paper-muted" font-size="14" text-anchor="middle">D=32，依赖距离 7，两拍未响应输入最多 8 项：32−7−8 = 17</text>
+
+          <rect x="910" y="225" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="225" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="251" class="t-paper-serif" font-size="17" text-anchor="middle">win[5]</text>
+          <text x="950" y="272" class="t-paper-muted" font-size="12" text-anchor="middle">direct</text>
+          <rect x="910" y="295" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="295" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="321" class="t-paper-serif" font-size="17" text-anchor="middle">win[3:1]</text>
+          <text x="950" y="342" class="t-paper-muted" font-size="12" text-anchor="middle">reduction</text>
+          <rect x="910" y="365" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="365" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="391" class="t-paper-serif" font-size="17" text-anchor="middle">win[4]</text>
+          <text x="950" y="412" class="t-paper-muted" font-size="12" text-anchor="middle">gate</text>
+          <circle cx="1060" cy="325" r="20" class="c-paper-canvas"/>
+          <circle cx="1060" cy="325" r="20" class="c-paper-yellow" stroke-width="2.5"/>
+          <text x="1060" y="332" class="t-paper" font-size="18" font-weight="700" text-anchor="middle">OR</text>
+          <circle cx="1160" cy="340" r="25" class="c-paper-canvas"/>
+          <circle cx="1160" cy="340" r="25" class="c-paper-yellow" stroke-width="2.5"/>
+          <text x="1160" y="348" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">&amp;</text>
+          <circle cx="1322" cy="300" r="23" class="c-paper-canvas"/>
+          <circle cx="1322" cy="300" r="23" class="c-paper-green" stroke-width="2.5"/>
+          <text x="1322" y="307" class="t-paper" font-size="18" font-weight="700" text-anchor="middle">OR</text>
+          <text x="1210" y="390" class="t-paper" font-size="16" text-anchor="middle">win_over = win[5] OR (win[4] AND |win[3:1])</text>
+
+          <rect x="910" y="480" width="80" height="60" class="c-paper-canvas"/>
+          <rect x="910" y="480" width="80" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="950" y="506" class="t-paper-serif" font-size="17" text-anchor="middle">occ</text>
+          <text x="950" y="527" class="t-paper-muted" font-size="12" text-anchor="middle">6-bit</text>
+          <rect x="1100" y="475" width="140" height="70" class="c-paper-canvas"/>
+          <rect x="1100" y="475" width="140" height="70" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="1170" y="504" class="t-paper-serif" font-size="17" text-anchor="middle">Occupancy limit</text>
+          <text x="1170" y="528" class="t-paper" font-size="15" text-anchor="middle">occ &gt; 23</text>
+          <circle cx="1365" cy="450" r="20" class="c-paper-canvas"/>
+          <circle cx="1365" cy="450" r="20" class="c-paper-green" stroke-width="2.5"/>
+          <text x="1365" y="457" class="t-paper" font-size="18" font-weight="700" text-anchor="middle">OR</text>
+          <rect x="1420" y="415" width="85" height="70" class="c-paper-canvas"/>
+          <rect x="1420" y="415" width="85" height="70" class="c-paper-green" stroke-width="2.5"/>
+          <text x="1462.5" y="444" class="t-paper-serif" font-size="17" text-anchor="middle">DFF</text>
+          <text x="1462.5" y="468" class="t-paper" font-size="14" text-anchor="middle">bkpr_r</text>
+          <text x="1210" y="620" class="t-paper" font-size="15" text-anchor="middle">固定阈值直接化简成少量 AND / OR，避免通用 magnitude comparator</text>
+
+        </g>
+</svg>

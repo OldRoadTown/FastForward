@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .bg{fill:#fff;stroke:none}.frame{fill:#fff;stroke:#111}.blue{fill:#a9cbea;stroke:#111}.red{fill:#f5aaaa;stroke:#111}.green{fill:#b9d99f;stroke:#111}.yellow{fill:#f5ddb0;stroke:#111}.gray{fill:#e5e7eb;stroke:#111}
+    .wire{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#111;fill:none;stroke-dasharray:10 7}.title{fill:#111;font:700 34px Arial,"Microsoft YaHei",sans-serif}.head{fill:#111;font:700 24px Arial,"Microsoft YaHei",sans-serif}.body{fill:#111;font:18px Arial,"Microsoft YaHei",sans-serif}.small{fill:#4b5563;font:14px Arial,"Microsoft YaHei",sans-serif}.serif{fill:#111;font:22px Georgia,SimSun,serif}.mono{fill:#111;font:20px "Courier New",monospace}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#111"/></marker></defs>
+  <rect width="1600" height="900" class="bg"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="72" class="title" text-anchor="middle">项目问题与优化目标</text>
+  <text x="800" y="104" class="small" text-anchor="middle">在 4FE 资源约束下，同时控制时钟周期、执行周期数、面积和功耗</text>
+
+  <path d="M405 305 L535 305" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M800 305 L930 305" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1140 390 L1140 485" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <text x="230" y="170" class="head" text-anchor="middle">外部任务</text>
+  <rect x="80" y="205" width="300" height="200" class="blue" stroke-width="2.8"/>
+  <text x="230" y="247" class="serif" text-anchor="middle">PKTIN ×4</text>
+  <text x="230" y="284" class="body" text-anchor="middle">每拍最多输入 4 项</text>
+  <text x="230" y="322" class="body" text-anchor="middle">依赖数据转发</text>
+  <text x="230" y="360" class="body" text-anchor="middle">按序 PKTOUT ×4</text>
+  <rect x="105" y="445" width="250" height="90" class="gray" stroke-width="2.3"/>
+  <text x="230" y="480" class="serif" text-anchor="middle">资源约束</text>
+  <text x="230" y="514" class="body" text-anchor="middle">仅 4 个 Forwarding Engine</text>
+
+  <text x="667" y="170" class="head" text-anchor="middle">统一执行时间</text>
+  <circle cx="667" cy="305" r="132" class="yellow" stroke-width="3"/>
+  <text x="667" y="286" class="mono" font-weight="700" text-anchor="middle">T = cycles × Tclk</text>
+  <line x1="570" y1="317" x2="764" y2="317" class="wire" stroke-width="2"/>
+  <text x="667" y="355" class="body" text-anchor="middle">两项都必须降低</text>
+  <rect x="520" y="485" width="294" height="105" class="red" stroke-width="2.5"/>
+  <text x="667" y="524" class="serif" text-anchor="middle">时钟目标</text>
+  <text x="667" y="558" class="mono" font-weight="700" text-anchor="middle">0.4 ns</text>
+  <text x="667" y="582" class="small" text-anchor="middle">uncertainty = 0.045 ns</text>
+
+  <text x="1140" y="170" class="head" text-anchor="middle">优化优先级</text>
+  <rect x="930" y="205" width="420" height="185" class="green" stroke-width="2.8"/>
+  <text x="1140" y="245" class="serif" text-anchor="middle">第一优先级</text>
+  <text x="1140" y="288" class="body" font-weight="700" text-anchor="middle">降低 T</text>
+  <text x="1140" y="326" class="body" text-anchor="middle">时序不恶化，同时减少 cycles</text>
+  <text x="1140" y="363" class="small" text-anchor="middle">不能用局部时序或单个 workload 代替统一 T</text>
+  <rect x="930" y="485" width="420" height="155" class="blue" stroke-width="2.8"/>
+  <text x="1140" y="527" class="serif" text-anchor="middle">第二优先级</text>
+  <text x="1140" y="572" class="body" font-weight="700" text-anchor="middle">降低 Area 与 Power</text>
+  <text x="1140" y="610" class="small" text-anchor="middle">不改变时序和功能周期</text>
+
+  <rect x="125" y="705" width="1350" height="85" class="frame" stroke-width="2.5"/>
+  <text x="800" y="742" class="mono" font-weight="700" text-anchor="middle">Score = 1 / (T⁴ × Power × Area)</text>
+  <text x="800" y="774" class="small" text-anchor="middle">T 的四次方权重决定了项目首先关注时钟与 cycles</text>
+</svg>

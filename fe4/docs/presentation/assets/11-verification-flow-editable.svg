@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .bg{fill:#fff;stroke:none}.frame{fill:#fff;stroke:#111}.blue{fill:#a9cbea;stroke:#111}.red{fill:#f5aaaa;stroke:#111}.green{fill:#b9d99f;stroke:#111}.yellow{fill:#f5ddb0;stroke:#111}.gray{fill:#e5e7eb;stroke:#111}
+    .wire{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#111;fill:none;stroke-dasharray:10 7;stroke-linejoin:round}.title{fill:#111;font:700 34px Arial,"Microsoft YaHei",sans-serif}.head{fill:#111;font:700 22px Arial,"Microsoft YaHei",sans-serif}.body{fill:#111;font:16px Arial,"Microsoft YaHei",sans-serif}.small{fill:#4b5563;font:13px Arial,"Microsoft YaHei",sans-serif}.serif{fill:#111;font:20px Georgia,SimSun,serif}.mono{fill:#111;font:15px "Courier New",monospace}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#111"/></marker></defs>
+  <rect width="1600" height="900" class="bg"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="72" class="title" text-anchor="middle">验证与候选保留流程</text>
+  <text x="800" y="104" class="small" text-anchor="middle">每个 RTL 候选先证明功能正确，再比较 cycles、时序、面积和功耗</text>
+
+  <!-- Primary flow -->
+  <path d="M245 310 L300 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M500 310 L555 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M755 310 L810 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1010 310 L1065 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1265 310 L1310 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1390 310 L1460 310" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <rect x="65" y="245" width="180" height="130" class="blue" stroke-width="2.6"/>
+  <text x="155" y="280" class="head" text-anchor="middle">独立分支</text>
+  <text x="155" y="316" class="body" text-anchor="middle">RTL 修改</text>
+  <text x="155" y="346" class="small" text-anchor="middle">完整 Git SHA</text>
+
+  <rect x="300" y="225" width="200" height="170" class="yellow" stroke-width="2.6"/>
+  <text x="400" y="262" class="head" text-anchor="middle">快速功能检查</text>
+  <text x="400" y="299" class="mono" text-anchor="middle">make quick</text>
+  <text x="400" y="330" class="body" text-anchor="middle">协议与基础顺序</text>
+  <text x="400" y="360" class="small" text-anchor="middle">失败则立即停止</text>
+
+  <rect x="555" y="205" width="200" height="210" class="yellow" stroke-width="2.6"/>
+  <text x="655" y="242" class="head" text-anchor="middle">工作负载回归</text>
+  <text x="655" y="280" class="body" text-anchor="middle">mid / heavy</text>
+  <text x="655" y="311" class="body" text-anchor="middle">DEPHEAVY / sparse</text>
+  <text x="655" y="342" class="body" text-anchor="middle">dual / full</text>
+  <text x="655" y="382" class="small" text-anchor="middle">多 seed 对比 cycles</text>
+
+  <rect x="810" y="205" width="200" height="210" class="red" stroke-width="2.6"/>
+  <text x="910" y="242" class="head" text-anchor="middle">逐拍断言</text>
+  <text x="910" y="279" class="body" text-anchor="middle">按序 PKTOUT</text>
+  <text x="910" y="310" class="body" text-anchor="middle">FE 槽无冲突</text>
+  <text x="910" y="341" class="body" text-anchor="middle">结果唯一写源</text>
+  <text x="910" y="382" class="small" text-anchor="middle">credit 不超过真实进度</text>
+
+  <rect x="1065" y="225" width="200" height="170" class="blue" stroke-width="2.6"/>
+  <text x="1165" y="262" class="head" text-anchor="middle">配对逻辑代理</text>
+  <text x="1165" y="299" class="body" text-anchor="middle">Yosys / ABC</text>
+  <text x="1165" y="330" class="body" text-anchor="middle">cells 与逻辑深度</text>
+  <text x="1165" y="360" class="small" text-anchor="middle">同命令、同基线</text>
+
+  <circle cx="1350" cy="310" r="40" class="green" stroke-width="2.8"/>
+  <text x="1350" y="303" class="head" text-anchor="middle">保留?</text>
+  <text x="1350" y="329" class="small" text-anchor="middle">全部通过</text>
+
+  <rect x="1460" y="255" width="90" height="110" class="green" stroke-width="2.8"/>
+  <text x="1505" y="295" class="head" text-anchor="middle">YES</text>
+  <text x="1505" y="329" class="body" text-anchor="middle">归档</text>
+  <text x="1505" y="350" class="small" text-anchor="middle">主线候选</text>
+
+  <!-- Fail path -->
+  <path d="M1350 350 L1350 545 L1110 545" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="830" y="495" width="280" height="100" class="gray" stroke-width="2.5"/>
+  <text x="970" y="533" class="head" text-anchor="middle">NO：停止并记录原因</text>
+  <text x="970" y="568" class="body" text-anchor="middle">功能错误、cycles 回退或时序恶化</text>
+  <path d="M830 545 L615 545 L615 475 L155 475 L155 375" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+
+  <!-- Signoff lane -->
+  <rect x="170" y="675" width="1260" height="105" class="frame" stroke-width="2.5"/>
+  <text x="800" y="710" class="head" text-anchor="middle">最终签核环境</text>
+  <text x="800" y="744" class="body" text-anchor="middle">真实 FE、正式 Liberty 与 corner、P&amp;R 寄生、workload VCD/SAIF、统一用例 T</text>
+  <text x="800" y="770" class="small" text-anchor="middle">开源 Nangate45 与 OpenSTA 只用于固定条件下的配对排序</text>
+</svg>

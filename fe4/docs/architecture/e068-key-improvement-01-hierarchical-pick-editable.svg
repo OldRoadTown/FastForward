@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img">
+<style>.c-paper-canvas{fill:#fff;stroke:none}.c-paper-boundary{fill:#fff;stroke:#111}.c-paper-red{fill:#f5aaaa;stroke:#111}.c-paper-green{fill:#b9d99f;stroke:#111}.c-paper-blue{fill:#a9cbea;stroke:#111}.c-paper-yellow{fill:#f5ddb0;stroke:#111}.c-paper-gray{fill:#e5e7eb;stroke:#111}.t-paper{fill:#111;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.t-paper-serif{fill:#111;font-family:Georgia,SimSun,serif}.t-paper-muted{fill:#4b5563;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.a-paper{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.a-paper-dashed{stroke:#111;fill:none;stroke-dasharray:10,7;stroke-linejoin:round}.m-paper{fill:#111}</style>
+<g id="paper-improvement-01">
+          <defs>
+            <marker id="paper-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <polygon points="0 0, 10 4, 0 8" class="m-paper"/>
+            </marker>
+          </defs>
+          <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
+          <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
+          <text x="800" y="65" class="t-paper" font-size="31" font-weight="700" text-anchor="middle">关键改进 1 — 分层 Pick 搜索</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">E006 引入，缩放为 E068 的 ROB32 / 4×8 结构；timing-safe 只保留单主候选</text>
+
+          <!-- Wires before blocks -->
+          <path d="M190 255 L230 255" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M190 385 L215 385 L215 315 L230 315" class="a-paper" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <path d="M330 245 L380 235" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M330 315 L380 355" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M510 235 L545 280" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M510 355 L545 320" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M635 300 L650 300" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M690 300 L700 300" class="a-paper" stroke-width="2.7" marker-end="url(#paper-arrowhead)"/>
+          <path d="M445 405 L445 500" class="a-paper-dashed" stroke-width="2.3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M710 420 L890 420" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+
+          <path d="M1010 255 L1050 255" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1010 385 L1030 385 L1030 365 L1050 365" class="a-paper" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1180 315 L1220 315" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1340 315 L1370 315" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1510 315 L1530 315" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1115 430 L1115 500" class="a-paper-dashed" stroke-width="2.3" marker-end="url(#paper-arrowhead)"/>
+
+          <!-- Before panel -->
+          <rect x="60" y="125" width="650" height="600" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="385" y="165" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">改进前：宽搜索 + 双候选</text>
+          <text x="385" y="190" class="t-paper-muted" font-size="14" text-anchor="middle">rotate / flat priority cone；even / odd 两路均计算</text>
+
+          <rect x="90" y="225" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="225" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="251" class="t-paper-serif" font-size="18" text-anchor="middle">cand</text>
+          <text x="140" y="272" class="t-paper-muted" font-size="12" text-anchor="middle">64-bit</text>
+
+          <rect x="90" y="355" width="100" height="60" class="c-paper-canvas"/>
+          <rect x="90" y="355" width="100" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="140" y="381" class="t-paper-serif" font-size="18" text-anchor="middle">rbase</text>
+          <text x="140" y="402" class="t-paper-muted" font-size="12" text-anchor="middle">age origin</text>
+
+          <rect x="230" y="210" width="100" height="140" class="c-paper-canvas"/>
+          <rect x="230" y="210" width="100" height="140" class="c-paper-red" stroke-width="2.3"/>
+          <text x="280" y="244" class="t-paper-serif" font-size="17" text-anchor="middle">Parity Split</text>
+          <line x1="245" y1="266" x2="315" y2="266" class="a-paper" stroke-width="1.5"/>
+          <text x="280" y="290" class="t-paper" font-size="14" text-anchor="middle">even mask</text>
+          <text x="280" y="325" class="t-paper" font-size="14" text-anchor="middle">odd mask</text>
+
+          <rect x="380" y="205" width="130" height="60" class="c-paper-canvas"/>
+          <rect x="380" y="205" width="130" height="60" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="445" y="233" class="t-paper-serif" font-size="18" text-anchor="middle">Oldest PE</text>
+          <text x="445" y="253" class="t-paper-muted" font-size="12" text-anchor="middle">even candidate</text>
+          <rect x="380" y="325" width="130" height="60" class="c-paper-canvas"/>
+          <rect x="380" y="325" width="130" height="60" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="445" y="353" class="t-paper-serif" font-size="18" text-anchor="middle">Oldest PE</text>
+          <text x="445" y="373" class="t-paper-muted" font-size="12" text-anchor="middle">odd candidate</text>
+
+          <rect x="545" y="265" width="90" height="70" class="c-paper-canvas"/>
+          <rect x="545" y="265" width="90" height="70" class="c-paper-red" stroke-width="2.3"/>
+          <text x="590" y="293" class="t-paper-serif" font-size="17" text-anchor="middle">SUB age</text>
+          <text x="590" y="317" class="t-paper-muted" font-size="12" text-anchor="middle">×2 + CMP</text>
+          <circle cx="670" cy="300" r="20" class="c-paper-canvas"/>
+          <circle cx="670" cy="300" r="20" class="c-paper-red" stroke-width="2.3"/>
+          <text x="670" y="307" class="t-paper" font-size="20" font-weight="700" text-anchor="middle">SEL</text>
+
+          <rect x="230" y="500" width="400" height="105" class="c-paper-canvas"/>
+          <rect x="230" y="500" width="400" height="105" class="c-paper-gray" stroke-width="2.3"/>
+          <text x="430" y="535" class="t-paper-serif" font-size="20" text-anchor="middle">Secondary candidate + donor / receiver matchers</text>
+          <text x="430" y="564" class="t-paper-muted" font-size="14" text-anchor="middle">timing-safe 配置根本不会消费这条路径</text>
+          <line x1="245" y1="515" x2="615" y2="590" class="a-paper" stroke-width="4"/>
+          <line x1="615" y1="515" x2="245" y2="590" class="a-paper" stroke-width="4"/>
+
+          <!-- After panel -->
+          <rect x="890" y="125" width="650" height="600" class="c-paper-boundary" stroke-width="2.5" fill-opacity="0"/>
+          <text x="1215" y="165" class="t-paper" font-size="24" font-weight="700" text-anchor="middle">改进后：单主候选 + 4×8 分层搜索</text>
+          <text x="1215" y="190" class="t-paper-muted" font-size="14" text-anchor="middle">E068 当前 ROB32 形式；保持环形年龄顺序</text>
+
+          <rect x="920" y="225" width="90" height="60" class="c-paper-canvas"/>
+          <rect x="920" y="225" width="90" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="965" y="251" class="t-paper-serif" font-size="18" text-anchor="middle">cand</text>
+          <text x="965" y="272" class="t-paper-muted" font-size="12" text-anchor="middle">32-bit</text>
+          <rect x="920" y="355" width="90" height="60" class="c-paper-canvas"/>
+          <rect x="920" y="355" width="90" height="60" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="965" y="381" class="t-paper-serif" font-size="18" text-anchor="middle">rbase</text>
+          <text x="965" y="402" class="t-paper-muted" font-size="12" text-anchor="middle">bank/local</text>
+
+          <rect x="1050" y="205" width="130" height="225" class="c-paper-canvas"/>
+          <rect x="1050" y="205" width="130" height="225" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1115" y="235" class="t-paper-serif" font-size="18" text-anchor="middle">Bank Split</text>
+          <rect x="1065" y="255" width="100" height="30" class="c-paper-canvas"/>
+          <rect x="1065" y="255" width="100" height="30" class="c-paper-yellow" stroke-width="1.7"/>
+          <text x="1115" y="275" class="t-paper" font-size="13" text-anchor="middle">bank0 [7:0]</text>
+          <rect x="1065" y="293" width="100" height="30" class="c-paper-canvas"/>
+          <rect x="1065" y="293" width="100" height="30" class="c-paper-yellow" stroke-width="1.7"/>
+          <text x="1115" y="313" class="t-paper" font-size="13" text-anchor="middle">bank1 [15:8]</text>
+          <rect x="1065" y="331" width="100" height="30" class="c-paper-canvas"/>
+          <rect x="1065" y="331" width="100" height="30" class="c-paper-yellow" stroke-width="1.7"/>
+          <text x="1115" y="351" class="t-paper" font-size="13" text-anchor="middle">bank2 [23:16]</text>
+          <rect x="1065" y="369" width="100" height="30" class="c-paper-canvas"/>
+          <rect x="1065" y="369" width="100" height="30" class="c-paper-yellow" stroke-width="1.7"/>
+          <text x="1115" y="389" class="t-paper" font-size="13" text-anchor="middle">bank3 [31:24]</text>
+          <text x="1115" y="418" class="t-paper-muted" font-size="12" text-anchor="middle">base bank: post / pre</text>
+
+          <rect x="1220" y="245" width="120" height="140" class="c-paper-canvas"/>
+          <rect x="1220" y="245" width="120" height="140" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="1280" y="280" class="t-paper-serif" font-size="19" text-anchor="middle">PE8H ×4</text>
+          <text x="1280" y="311" class="t-paper" font-size="14" text-anchor="middle">valid</text>
+          <text x="1280" y="334" class="t-paper" font-size="14" text-anchor="middle">local idx</text>
+          <text x="1280" y="357" class="t-paper" font-size="14" text-anchor="middle">local one-hot</text>
+
+          <rect x="1370" y="245" width="140" height="140" class="c-paper-canvas"/>
+          <rect x="1370" y="245" width="140" height="140" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1440" y="279" class="t-paper-serif" font-size="18" text-anchor="middle">Circular Bank</text>
+          <text x="1440" y="303" class="t-paper-serif" font-size="18" text-anchor="middle">Select + MUX</text>
+          <text x="1440" y="333" class="t-paper-muted" font-size="12" text-anchor="middle">post-base first</text>
+          <text x="1440" y="353" class="t-paper-muted" font-size="12" text-anchor="middle">then other banks</text>
+          <text x="1440" y="373" class="t-paper-muted" font-size="12" text-anchor="middle">pre-base last</text>
+
+          <rect x="1050" y="500" width="460" height="105" class="c-paper-canvas"/>
+          <rect x="1050" y="500" width="460" height="105" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1280" y="535" class="t-paper-serif" font-size="20" text-anchor="middle">Critical path uses the same hierarchy</text>
+          <text x="1280" y="564" class="t-paper" font-size="14" text-anchor="middle">cand &amp; crit_q → peHoh → critical-first MUX</text>
+          <text x="1280" y="587" class="t-paper-muted" font-size="13" text-anchor="middle">idx / target / physical one-hot / bank one-hot / local one-hot 一次带出</text>
+
+        </g>
+</svg>

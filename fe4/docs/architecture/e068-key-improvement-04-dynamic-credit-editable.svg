@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img">
+<style>.c-paper-canvas{fill:#fff;stroke:none}.c-paper-boundary{fill:#fff;stroke:#111}.c-paper-red{fill:#f5aaaa;stroke:#111}.c-paper-green{fill:#b9d99f;stroke:#111}.c-paper-blue{fill:#a9cbea;stroke:#111}.c-paper-yellow{fill:#f5ddb0;stroke:#111}.c-paper-gray{fill:#e5e7eb;stroke:#111}.t-paper{fill:#111;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.t-paper-serif{fill:#111;font-family:Georgia,SimSun,serif}.t-paper-muted{fill:#4b5563;font-family:Arial,Microsoft YaHei,PingFang SC,sans-serif}.a-paper{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.a-paper-dashed{stroke:#111;fill:none;stroke-dasharray:10,7;stroke-linejoin:round}.m-paper{fill:#111}</style>
+<g id="paper-improvement-04">
+          <defs>
+            <marker id="paper-arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+              <polygon points="0 0, 10 4, 0 8" class="m-paper"/>
+            </marker>
+          </defs>
+          <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
+          <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
+          <text x="800" y="65" class="t-paper" font-size="31" font-weight="700" text-anchor="middle">关键改进 4 — 同拍动态 BKPR Credit</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">E068：安全界限仍为 occ &gt; 23 / win &gt; 17，只把本拍确定发生的退休和发射推进计入判断</text>
+
+          <!-- Retirement lane -->
+          <rect x="55" y="125" width="1170" height="275" class="c-paper-boundary" stroke-width="2.5"/>
+          <text x="75" y="160" class="t-paper" font-size="22" font-weight="700">A. Retirement credit：本拍可退休 0..4 项</text>
+
+          <rect x="80" y="190" width="150" height="65" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="155" y="217" class="t-paper-serif" font-size="17" text-anchor="middle">pop_therm[3:0]</text>
+          <text x="155" y="240" class="t-paper-muted" font-size="12" text-anchor="middle">来自 ROB 退休链</text>
+          <rect x="80" y="305" width="150" height="65" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="155" y="332" class="t-paper-serif" font-size="18" text-anchor="middle">occ[5:0]</text>
+          <text x="155" y="355" class="t-paper-muted" font-size="12" text-anchor="middle">alloc_nxt − out_seq_q</text>
+
+          <path d="M230 222 L285 222" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <rect x="285" y="180" width="185" height="85" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="377" y="211" class="t-paper-serif" font-size="18" text-anchor="middle">Therm → Onehot</text>
+          <text x="377" y="236" class="t-paper" font-size="14" text-anchor="middle">pop_count_oh[4:0]</text>
+          <text x="377" y="255" class="t-paper-muted" font-size="11" text-anchor="middle">恰有 0 / 1 / 2 / 3 / 4 项</text>
+
+          <path d="M230 337 L515 337 L515 290" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <rect x="515" y="175" width="250" height="170" class="c-paper-green" stroke-width="2.3"/>
+          <text x="640" y="203" class="t-paper-serif" font-size="18" text-anchor="middle">Fixed threshold bank</text>
+          <text x="640" y="232" class="t-paper" font-size="15" text-anchor="middle">c0 = (occ &gt; 23)</text>
+          <text x="640" y="256" class="t-paper" font-size="15" text-anchor="middle">c1 = (occ &gt; 24)</text>
+          <text x="640" y="280" class="t-paper" font-size="15" text-anchor="middle">…</text>
+          <text x="640" y="304" class="t-paper" font-size="15" text-anchor="middle">c4 = (occ &gt; 27)</text>
+          <text x="640" y="328" class="t-paper-muted" font-size="11" text-anchor="middle">固定布尔比较器，不做通用减法</text>
+
+          <path d="M470 222 L820 222 L820 245 L880 245" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M765 260 L880 260" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <circle cx="915" cy="253" r="35" class="c-paper-yellow" stroke-width="2.5"/>
+          <text x="915" y="260" class="t-paper" font-size="17" font-weight="700" text-anchor="middle">SEL</text>
+          <text x="915" y="305" class="t-paper-muted" font-size="12" text-anchor="middle">5×AND + OR</text>
+          <path d="M950 253 L1070 253" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+          <rect x="1070" y="218" width="125" height="70" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1132" y="248" class="t-paper-serif" font-size="18" text-anchor="middle">occ_over</text>
+          <text x="1132" y="270" class="t-paper-muted" font-size="11" text-anchor="middle">选 c[pop_count]</text>
+          <text x="640" y="377" class="t-paper" font-size="17" font-weight="700" text-anchor="middle">等价条件：occ − pop_count &gt; 23</text>
+
+          <!-- Issue lane -->
+          <rect x="55" y="425" width="1170" height="315" class="c-paper-boundary" stroke-width="2.5"/>
+          <text x="75" y="460" class="t-paper" font-size="22" font-weight="700">B. Issue advance credit：oldest-unissued 本拍可前进 0..4 项</text>
+
+          <rect x="80" y="490" width="155" height="85" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="157" y="516" class="t-paper-serif" font-size="17" text-anchor="middle">iss_eff</text>
+          <text x="157" y="539" class="t-paper" font-size="13" text-anchor="middle">iss_q | picked</text>
+          <text x="157" y="560" class="t-paper-muted" font-size="11" text-anchor="middle">old_u+0..3，受 dist_f 限定</text>
+          <rect x="80" y="635" width="155" height="65" class="c-paper-blue" stroke-width="2.3"/>
+          <text x="157" y="662" class="t-paper-serif" font-size="18" text-anchor="middle">win[5:0]</text>
+          <text x="157" y="685" class="t-paper-muted" font-size="12" text-anchor="middle">alloc_nxt − old_u_q</text>
+
+          <path d="M235 532 L285 532" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <circle cx="315" cy="532" r="25" class="c-paper-yellow" stroke-width="2.3"/>
+          <circle cx="380" cy="532" r="25" class="c-paper-yellow" stroke-width="2.3"/>
+          <circle cx="445" cy="532" r="25" class="c-paper-yellow" stroke-width="2.3"/>
+          <circle cx="510" cy="532" r="25" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="315" y="539" class="t-paper" font-size="21" font-weight="700" text-anchor="middle">&amp;</text>
+          <text x="380" y="539" class="t-paper" font-size="21" font-weight="700" text-anchor="middle">&amp;</text>
+          <text x="445" y="539" class="t-paper" font-size="21" font-weight="700" text-anchor="middle">&amp;</text>
+          <text x="510" y="539" class="t-paper" font-size="21" font-weight="700" text-anchor="middle">&amp;</text>
+          <path d="M340 532 L355 532 M405 532 L420 532 M470 532 L485 532" class="a-paper" stroke-width="2.5" marker-end="url(#paper-arrowhead)"/>
+          <text x="412" y="580" class="t-paper-muted" font-size="12" text-anchor="middle">连续 AND 链 → adv_therm[3:0]</text>
+
+          <path d="M535 532 L575 532" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <rect x="575" y="490" width="185" height="85" class="c-paper-yellow" stroke-width="2.3"/>
+          <text x="667" y="521" class="t-paper-serif" font-size="18" text-anchor="middle">Therm → Onehot</text>
+          <text x="667" y="546" class="t-paper" font-size="14" text-anchor="middle">adv_count_oh[4:0]</text>
+          <text x="667" y="565" class="t-paper-muted" font-size="11" text-anchor="middle">保证发生的推进量</text>
+
+          <path d="M235 667 L510 667 L510 655" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <rect x="510" y="605" width="250" height="105" class="c-paper-green" stroke-width="2.3"/>
+          <text x="635" y="632" class="t-paper-serif" font-size="18" text-anchor="middle">Fixed threshold bank</text>
+          <text x="635" y="658" class="t-paper" font-size="15" text-anchor="middle">win &gt; 17, 18, 19, 20, 21</text>
+          <text x="635" y="684" class="t-paper-muted" font-size="11" text-anchor="middle">E066 的 17 不变，只选择更高门槛</text>
+
+          <path d="M760 532 L820 532 L820 572 L880 572" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <path d="M760 657 L835 657 L835 588 L880 588" class="a-paper" stroke-width="3" marker-end="url(#paper-arrowhead)"/>
+          <circle cx="915" cy="580" r="35" class="c-paper-yellow" stroke-width="2.5"/>
+          <text x="915" y="587" class="t-paper" font-size="17" font-weight="700" text-anchor="middle">SEL</text>
+          <text x="915" y="632" class="t-paper-muted" font-size="12" text-anchor="middle">5×AND + OR</text>
+          <path d="M950 580 L1070 580" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+          <rect x="1070" y="545" width="125" height="70" class="c-paper-green" stroke-width="2.3"/>
+          <text x="1132" y="575" class="t-paper-serif" font-size="18" text-anchor="middle">win_over</text>
+          <text x="1132" y="597" class="t-paper-muted" font-size="11" text-anchor="middle">选 w[adv_count]</text>
+          <text x="835" y="704" class="t-paper" font-size="17" font-weight="700" text-anchor="middle">等价条件：win − guaranteed_advance &gt; 17</text>
+
+          <!-- Final BKPR logic -->
+          <path d="M1195 253 L1280 253 L1280 390 L1305 390" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+          <path d="M1195 580 L1280 580 L1280 410 L1305 410" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+          <circle cx="1345" cy="400" r="40" class="c-paper-red" stroke-width="2.8"/>
+          <text x="1345" y="408" class="t-paper" font-size="19" font-weight="700" text-anchor="middle">OR</text>
+          <path d="M1385 400 L1420 400" class="a-paper" stroke-width="4" marker-end="url(#paper-arrowhead)"/>
+          <rect x="1420" y="355" width="115" height="90" class="c-paper-green" stroke-width="2.5"/>
+          <text x="1477" y="389" class="t-paper-serif" font-size="18" text-anchor="middle">BKPR DFF</text>
+          <text x="1477" y="414" class="t-paper" font-size="14" text-anchor="middle">bkpr_r</text>
+          <text x="1477" y="435" class="t-paper-muted" font-size="11" text-anchor="middle">输出打拍</text>
+          <text x="1370" y="486" class="t-paper-muted" font-size="13" text-anchor="middle">组合 credit 只到 BKPR 输入</text>
+
+          <rect x="1245" y="555" width="290" height="105" class="c-paper-gray" stroke-width="2.2"/>
+          <text x="1390" y="583" class="t-paper-serif" font-size="17" text-anchor="middle">没有放入关键支路</text>
+          <text x="1390" y="607" class="t-paper" font-size="13" text-anchor="middle">通用 (occ−pop) / (win−adv) 减法比较</text>
+          <text x="1390" y="630" class="t-paper" font-size="13" text-anchor="middle">完整 old_u_n 搜索与 picker 组合锥</text>
+          <path d="M1260 570 L1520 645 M1520 570 L1260 645" class="a-paper" stroke-width="3"/>
+
+        </g>
+</svg>

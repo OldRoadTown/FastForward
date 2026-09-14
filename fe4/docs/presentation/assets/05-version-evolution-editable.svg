@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .bg{fill:#fff;stroke:none}.frame{fill:#fff;stroke:#111}.blue{fill:#a9cbea;stroke:#111}.red{fill:#f5aaaa;stroke:#111}.green{fill:#b9d99f;stroke:#111}.yellow{fill:#f5ddb0;stroke:#111}.gray{fill:#e5e7eb;stroke:#111}
+    .wire{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#555;fill:none;stroke-dasharray:10 7;stroke-linejoin:round}.title{fill:#111;font:700 34px Arial,"Microsoft YaHei",sans-serif}.head{fill:#111;font:700 21px Arial,"Microsoft YaHei",sans-serif}.body{fill:#111;font:16px Arial,"Microsoft YaHei",sans-serif}.small{fill:#4b5563;font:13px Arial,"Microsoft YaHei",sans-serif}.mono{fill:#111;font:17px "Courier New",monospace}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#111"/></marker></defs>
+  <rect width="1600" height="900" class="bg"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="72" class="title" text-anchor="middle">版本演进与优化取舍</text>
+  <text x="800" y="104" class="small" text-anchor="middle">绿色主线保留到当前 E080，灰色分支因时序风险或数据无效而停止</text>
+
+  <!-- Mainline arrows -->
+  <path d="M260 320 L310 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M490 320 L540 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M720 320 L770 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M950 320 L1000 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1180 320 L1230 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+  <path d="M1410 320 L1480 320" class="wire" stroke-width="4" marker-end="url(#arrow)"/>
+
+  <!-- Rejected branches -->
+  <path d="M400 405 L400 500" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+  <path d="M1090 405 L1090 500" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+  <path d="M1110 405 L1290 500" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+  <path d="M1130 405 L1480 500" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+
+  <!-- Accepted versions -->
+  <rect x="80" y="235" width="180" height="170" class="yellow" stroke-width="2.7"/>
+  <text x="170" y="270" class="head" text-anchor="middle">E006</text>
+  <text x="170" y="305" class="body" text-anchor="middle">分层 picker 思路</text>
+  <text x="170" y="337" class="body" text-anchor="middle">删除未使用双候选</text>
+  <text x="170" y="370" class="small" text-anchor="middle">历史 ROB64 版本</text>
+
+  <rect x="310" y="235" width="180" height="170" class="blue" stroke-width="2.7"/>
+  <text x="400" y="270" class="head" text-anchor="middle">v28 / E029</text>
+  <text x="400" y="305" class="body" text-anchor="middle">ROB32 基线</text>
+  <text x="400" y="337" class="body" text-anchor="middle">4×8 picker</text>
+  <text x="400" y="370" class="small" text-anchor="middle">23 / 13 阈值</text>
+
+  <rect x="540" y="235" width="180" height="170" class="green" stroke-width="2.7"/>
+  <text x="630" y="270" class="head" text-anchor="middle">E066</text>
+  <text x="630" y="305" class="body" text-anchor="middle">复用窗口 13 到 17</text>
+  <text x="630" y="337" class="body" text-anchor="middle">固定布尔比较</text>
+  <text x="630" y="370" class="small" text-anchor="middle">降低 BKPR cycles</text>
+
+  <rect x="770" y="235" width="180" height="170" class="green" stroke-width="2.7"/>
+  <text x="860" y="270" class="head" text-anchor="middle">E067</text>
+  <text x="860" y="305" class="body" text-anchor="middle">删除 outp_q</text>
+  <text x="860" y="337" class="body" text-anchor="middle">删除 pop_oh 反馈</text>
+  <text x="860" y="370" class="small" text-anchor="middle">建立时序余量</text>
+
+  <rect x="1000" y="235" width="180" height="170" class="green" stroke-width="3"/>
+  <text x="1090" y="270" class="head" text-anchor="middle">E068</text>
+  <text x="1090" y="305" class="body" text-anchor="middle">同拍动态 credit</text>
+  <text x="1090" y="337" class="body" text-anchor="middle">退休与发射互补</text>
+  <text x="1090" y="370" class="small" text-anchor="middle">吞吐优化基线</text>
+
+  <rect x="1230" y="235" width="180" height="170" class="green" stroke-width="3"/>
+  <text x="1320" y="270" class="head" text-anchor="middle">E080</text>
+  <text x="1320" y="305" class="body" text-anchor="middle">rob_lat 复用</text>
+  <text x="1320" y="337" class="body" text-anchor="middle">删除 rob_src 状态</text>
+  <text x="1320" y="370" class="small" text-anchor="middle">当前实现</text>
+
+  <rect x="1480" y="275" width="60" height="90" class="green" stroke-width="3"/>
+  <text x="1510" y="313" class="head" text-anchor="middle">✓</text>
+  <text x="1510" y="342" class="small" text-anchor="middle">保留</text>
+
+  <!-- Rejected versions -->
+  <rect x="285" y="500" width="230" height="125" class="gray" stroke-width="2.3"/>
+  <text x="400" y="535" class="head" text-anchor="middle">E064</text>
+  <text x="400" y="568" class="body" text-anchor="middle">存在时序伪例</text>
+  <text x="400" y="598" class="small" text-anchor="middle">禁止作为后续优化基线</text>
+  <path d="M300 515 L500 610 M500 515 L300 610" class="wire" stroke-width="3"/>
+
+  <rect x="975" y="500" width="230" height="125" class="gray" stroke-width="2.3"/>
+  <text x="1090" y="535" class="head" text-anchor="middle">E069</text>
+  <text x="1090" y="568" class="body" text-anchor="middle">同拍预唤醒</text>
+  <text x="1090" y="598" class="small" text-anchor="middle">时序明显恶化</text>
+  <path d="M990 515 L1190 610 M1190 515 L990 610" class="wire" stroke-width="3"/>
+
+  <rect x="1215" y="500" width="220" height="125" class="gray" stroke-width="2.3"/>
+  <text x="1325" y="535" class="head" text-anchor="middle">E072 / E073</text>
+  <text x="1325" y="568" class="body" text-anchor="middle">ROB64 方向</text>
+  <text x="1325" y="598" class="small" text-anchor="middle">关键路径严重违例</text>
+  <path d="M1230 515 L1420 610 M1420 515 L1230 610" class="wire" stroke-width="3"/>
+
+  <rect x="1445" y="500" width="100" height="125" class="gray" stroke-width="2.3"/>
+  <text x="1495" y="535" class="head" text-anchor="middle">E074</text>
+  <text x="1495" y="568" class="body" text-anchor="middle">输入预处理</text>
+  <text x="1495" y="598" class="small" text-anchor="middle">时序恶化</text>
+  <path d="M1455 515 L1535 610 M1535 515 L1455 610" class="wire" stroke-width="3"/>
+
+  <rect x="225" y="700" width="1150" height="80" class="frame" stroke-width="2.3"/>
+  <text x="800" y="737" class="body" font-weight="700" text-anchor="middle">保留原则：功能回归通过，cycles 有收益，最坏时序不超过已通过基线</text>
+  <text x="800" y="767" class="small" text-anchor="middle">每个候选使用独立分支和完整 RTL SHA，失败实验不混入后续版本</text>
+</svg>
