@@ -104,10 +104,13 @@
 
 配图：[05-version-evolution-editable.svg](assets/05-version-evolution-editable.svg)
 
-## 第 6 页：关键改进一，4×8 分层 Picker
+## 第 6 页：关键改进一，ROB Downsizing 与 4×8 分层 Picker
 
 页面内容：
 
+- ROB 深度由 64 项缩减为 32 项，外部 4-lane 输入、发射和退休带宽保持不变。
+- Data Array、ready/issue/result 状态位图和 allocation one-hot 宽度随 entry 数减半。
+- ROB 读选择网络由 64:1 缩为 32:1，Picker 的候选搜索宽度由 64-bit 缩为 32-bit。
 - 32 个候选按 4 个 bank 分组，每组 8 项。
 - bank 内先做 priority encode，再按 `old_u` 形成的 circular age 顺序选择 bank。
 - timing-safe 配置只保留主候选，避免 secondary candidate 和 donor/receiver 匹配网络进入组合路径。
@@ -115,6 +118,8 @@
 
 为什么这样修改：
 
+- ROB64 能容纳更多未退休 packet，但也会让存储阵列、状态向量、one-hot 译码、读 MUX 和候选搜索网络整体变宽。改为 ROB32 可以直接减少存储、控制位和翻转节点，并降低 ROB 到 Picker 的组合压力。
+- 容量缩小会使 occupancy/window BKPR 更容易触发，因此 ROB32 不能被当成独立的 cycles 优化；后续用 Safe Window 和 Same-Cycle Credit 回收过早背压造成的周期损失。
 - 直接对 32-bit 候选做旋转、全宽 priority encode 和年龄比较，会形成一条层级较深、扇出较大的组合路径。
 - 拆成 4 个 8-bit bank 后，bank 内 priority encode 并行进行；第二级只需要在 4 个 bank 结果中选择，组合深度更容易控制。
 - `old_u` 只决定 circular bank 顺序，不需要先生成完整 32-bit rotate 网络，可以减少宽 MUX。
@@ -123,7 +128,9 @@
 
 为什么不继续增大 ROB：ROB64 虽然能减少容量阻塞，但 ready mask、age 选择、状态位图和数据 MUX 都翻倍。E072/E073 已观察到 `u_rob/rdy_q` 到 `u_pick/pk_tseq_q` 的严重时序压力，因此当前保留 ROB32。
 
-配图：[分层 Pick 搜索](../architecture/e068-key-improvement-01-hierarchical-pick-editable.svg)
+配图一：[ROB Downsizing](assets/06-rob-downsizing-editable.svg)
+
+配图二：[分层 Pick 搜索](../architecture/e068-key-improvement-01-hierarchical-pick-editable.svg)
 
 ## 第 7 页：关键改进二，安全复用窗口
 

@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .bg{fill:#fff;stroke:none}.frame{fill:#fff;stroke:#111}.blue{fill:#a9cbea;stroke:#111}.red{fill:#f5aaaa;stroke:#111}.green{fill:#b9d99f;stroke:#111}.yellow{fill:#f5ddb0;stroke:#111}.gray{fill:#e5e7eb;stroke:#111}
+    .wire{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#111;fill:none;stroke-dasharray:10 7;stroke-linejoin:round}.title{fill:#111;font:700 34px Arial,"Microsoft YaHei",sans-serif}.head{fill:#111;font:700 24px Arial,"Microsoft YaHei",sans-serif}.body{fill:#111;font:17px Arial,"Microsoft YaHei",sans-serif}.small{fill:#4b5563;font:13px Arial,"Microsoft YaHei",sans-serif}.serif{fill:#111;font:21px Georgia,SimSun,serif}.mono{fill:#111;font:16px "Courier New",monospace}
+  </style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><polygon points="0 0,10 4,0 8" fill="#111"/></marker></defs>
+  <rect width="1600" height="900" class="bg"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="70" class="title" text-anchor="middle">ROB Downsizing</text>
+  <text x="800" y="102" class="small" text-anchor="middle">ROB64 缩减为 ROB32，同时缩短存储阵列、状态向量和选择网络</text>
+
+  <!-- Transformation arrow -->
+  <path d="M730 390 L870 390" class="wire" stroke-width="6" marker-end="url(#arrow)"/>
+  <text x="800" y="355" class="head" text-anchor="middle">64 → 32</text>
+  <text x="800" y="435" class="small" text-anchor="middle">entry depth</text>
+
+  <!-- ROB64 internal data paths -->
+  <path d="M100 310 L180 310" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M100 400 L180 400" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M100 490 L180 490" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M420 285 L500 285" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M420 390 L500 390" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M420 495 L500 495" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M650 285 L700 285" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M650 390 L700 390" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M650 495 L700 495" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- ROB32 internal data paths -->
+  <path d="M900 310 L980 310" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M900 400 L980 400" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M900 490 L980 490" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1220 285 L1290 285" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1220 390 L1290 390" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1220 495 L1290 495" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1440 285 L1510 285" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1440 390 L1510 390" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1440 495 L1510 495" class="wire" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- Before panel -->
+  <rect x="55" y="135" width="670" height="500" class="frame" stroke-width="2.5" fill-opacity="0"/>
+  <text x="390" y="178" class="head" text-anchor="middle">改进前：ROB64</text>
+  <text x="390" y="205" class="small" text-anchor="middle">更大容量，同时带来更宽的存储和组合选择网络</text>
+
+  <rect x="70" y="275" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="85" y="317" class="small" text-anchor="middle">A</text>
+  <rect x="70" y="365" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="85" y="407" class="small" text-anchor="middle">W</text>
+  <rect x="70" y="455" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="85" y="497" class="small" text-anchor="middle">R</text>
+  <text x="112" y="320" class="small">alloc</text>
+  <text x="112" y="410" class="small">writeback</text>
+  <text x="112" y="500" class="small">retire</text>
+
+  <rect x="180" y="235" width="240" height="320" class="green" stroke-width="3"/>
+  <text x="300" y="274" class="head" text-anchor="middle">64-entry ROB</text>
+  <line x1="210" y1="292" x2="390" y2="292" class="wire" stroke-width="2"/>
+  <rect x="215" y="315" width="170" height="75" class="yellow" stroke-width="2"/>
+  <text x="300" y="346" class="serif" text-anchor="middle">Data Array</text>
+  <text x="300" y="374" class="mono" text-anchor="middle">64 × 128-bit</text>
+  <rect x="215" y="415" width="170" height="105" class="red" stroke-width="2"/>
+  <text x="300" y="446" class="serif" text-anchor="middle">State Vectors</text>
+  <text x="300" y="475" class="mono" text-anchor="middle">ready / issue / result</text>
+  <text x="300" y="502" class="small" text-anchor="middle">每类状态均为 64-bit</text>
+
+  <rect x="500" y="245" width="150" height="80" class="red" stroke-width="2.5"/>
+  <text x="575" y="276" class="serif" text-anchor="middle">DEC6 → 64</text>
+  <text x="575" y="305" class="small" text-anchor="middle">allocation one-hot</text>
+  <rect x="500" y="350" width="150" height="80" class="yellow" stroke-width="2.5"/>
+  <text x="575" y="381" class="serif" text-anchor="middle">MUX64 → 1</text>
+  <text x="575" y="410" class="small" text-anchor="middle">packet / attribute read</text>
+  <rect x="500" y="455" width="150" height="80" class="yellow" stroke-width="2.5"/>
+  <text x="575" y="486" class="serif" text-anchor="middle">8 × 8 Picker</text>
+  <text x="575" y="515" class="small" text-anchor="middle">64-bit candidate search</text>
+
+  <text x="700" y="290" class="small">alloc_oh[63:0]</text>
+  <text x="700" y="395" class="small">read data</text>
+  <text x="700" y="500" class="small">pick result</text>
+
+  <!-- After panel -->
+  <rect x="875" y="135" width="670" height="500" class="frame" stroke-width="2.5" fill-opacity="0"/>
+  <text x="1210" y="178" class="head" text-anchor="middle">改进后：ROB32</text>
+  <text x="1210" y="205" class="small" text-anchor="middle">外部四路带宽保持不变，内部 entry 深度和选择宽度减半</text>
+
+  <rect x="870" y="275" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="885" y="317" class="small" text-anchor="middle">A</text>
+  <rect x="870" y="365" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="885" y="407" class="small" text-anchor="middle">W</text>
+  <rect x="870" y="455" width="30" height="70" class="blue" stroke-width="2"/>
+  <text x="885" y="497" class="small" text-anchor="middle">R</text>
+  <text x="912" y="320" class="small">alloc</text>
+  <text x="912" y="410" class="small">writeback</text>
+  <text x="912" y="500" class="small">retire</text>
+
+  <rect x="980" y="235" width="240" height="320" class="green" stroke-width="3"/>
+  <text x="1100" y="274" class="head" text-anchor="middle">32-entry ROB</text>
+  <line x1="1010" y1="292" x2="1190" y2="292" class="wire" stroke-width="2"/>
+  <rect x="1015" y="315" width="170" height="75" class="yellow" stroke-width="2"/>
+  <text x="1100" y="346" class="serif" text-anchor="middle">Data Array</text>
+  <text x="1100" y="374" class="mono" text-anchor="middle">32 × 128-bit</text>
+  <rect x="1015" y="415" width="170" height="105" class="blue" stroke-width="2"/>
+  <text x="1100" y="446" class="serif" text-anchor="middle">State Vectors</text>
+  <text x="1100" y="475" class="mono" text-anchor="middle">ready / issue / result</text>
+  <text x="1100" y="502" class="small" text-anchor="middle">每类状态缩为 32-bit</text>
+
+  <rect x="1290" y="245" width="150" height="80" class="blue" stroke-width="2.5"/>
+  <text x="1365" y="276" class="serif" text-anchor="middle">DEC5 → 32</text>
+  <text x="1365" y="305" class="small" text-anchor="middle">allocation one-hot</text>
+  <rect x="1290" y="350" width="150" height="80" class="yellow" stroke-width="2.5"/>
+  <text x="1365" y="381" class="serif" text-anchor="middle">MUX32 → 1</text>
+  <text x="1365" y="410" class="small" text-anchor="middle">packet / attribute read</text>
+  <rect x="1290" y="455" width="150" height="80" class="yellow" stroke-width="2.5"/>
+  <text x="1365" y="486" class="serif" text-anchor="middle">4 × 8 Picker</text>
+  <text x="1365" y="515" class="small" text-anchor="middle">32-bit candidate search</text>
+
+  <text x="1510" y="290" class="small">alloc_oh[31:0]</text>
+  <text x="1510" y="395" class="small">read data</text>
+  <text x="1510" y="500" class="small">pick result</text>
+
+  <!-- Explanation -->
+  <rect x="95" y="675" width="650" height="115" class="green" stroke-width="2.5"/>
+  <text x="420" y="711" class="head" text-anchor="middle">为什么缩减</text>
+  <text x="420" y="746" class="body" text-anchor="middle">减少数据存储、状态位图、one-hot 宽度、MUX fan-in 和 picker bank 数</text>
+  <text x="420" y="775" class="small" text-anchor="middle">目标是降低面积、翻转功耗和 ROB 到 picker 的组合压力</text>
+
+  <rect x="855" y="675" width="650" height="115" class="red" stroke-width="2.5"/>
+  <text x="1180" y="711" class="head" text-anchor="middle">容量代价</text>
+  <text x="1180" y="746" class="body" text-anchor="middle">可缓存的未退休 packet 减少，更容易触发 occupancy 和 issue-window BKPR</text>
+  <text x="1180" y="775" class="small" text-anchor="middle">后续使用 Safe Window 与 Same-Cycle Credit 回收过早反压</text>
+</svg>
