@@ -10,8 +10,8 @@
 
           <rect x="0" y="0" width="1600" height="900" class="c-paper-canvas"/>
           <rect x="28" y="25" width="1544" height="830" class="c-paper-boundary" stroke-width="4"/>
-          <text x="800" y="65" class="t-paper" font-size="32" font-weight="700" text-anchor="middle">FastForward E080 总体架构</text>
-          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">ROB32，4 个 Forwarding Engine，乱序发射，按序退休；E080 保持 E068 控制与数据通路</text>
+          <text x="800" y="65" class="t-paper" font-size="32" font-weight="700" text-anchor="middle">FastForward 总体架构</text>
+          <text x="800" y="94" class="t-paper-muted" font-size="15" text-anchor="middle">ROB32，4 个 Forwarding Engine，乱序发射，按序退休</text>
 
           <!-- Main packet/data path -->
           <path d="M190 350 L240 350" class="a-paper" stroke-width="3.2" marker-end="url(#paper-arrowhead)"/>
@@ -80,7 +80,7 @@
           <text x="630" y="377" class="t-paper-muted" font-size="13" text-anchor="middle">ready / wait / result / critical</text>
           <text x="630" y="400" class="t-paper-muted" font-size="13" text-anchor="middle">wake-up + result writeback</text>
           <text x="630" y="423" class="t-paper-muted" font-size="13" text-anchor="middle">alloc / output / oldest pointers</text>
-          <text x="630" y="450" class="t-paper" font-size="13" text-anchor="middle">E068 dynamic BKPR credit</text>
+          <text x="630" y="450" class="t-paper" font-size="13" text-anchor="middle">Same-Cycle BKPR Credit</text>
 
           <rect x="800" y="110" width="180" height="110" class="c-paper-canvas"/>
           <rect x="800" y="110" width="180" height="110" class="c-paper-select" stroke-width="2.8"/>
