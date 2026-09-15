@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <style>
+    .canvas{fill:#fff}.frame{fill:#fff;stroke:#111}.human{fill:#a9cbea;stroke:#111}.ai{fill:#f5aaaa;stroke:#111}.design{fill:#f5ddb0;stroke:#111}.tool{fill:#b9d99f;stroke:#111}.git{fill:#cbbce8;stroke:#111}.reject{fill:#f1b2b2;stroke:#111}.note{fill:#eef3f7;stroke:#111}
+    .title{fill:#111;font-family:Arial,"Microsoft YaHei","PingFang SC",sans-serif}.serif{fill:#111;font-family:Georgia,SimSun,serif}.muted{fill:#4b5563;font-family:Arial,"Microsoft YaHei","PingFang SC",sans-serif}.arrow{stroke:#111;fill:none;stroke-linejoin:round;stroke-linecap:square}.dash{stroke:#111;fill:none;stroke-dasharray:10,7;stroke-linejoin:round}.arrowhead{fill:#111}
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0,10 4,0 8" class="arrowhead"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="900" class="canvas"/>
+  <rect x="28" y="25" width="1544" height="830" class="frame" stroke-width="4"/>
+  <text x="800" y="66" class="title" font-size="32" font-weight="700" text-anchor="middle">AI 辅助硬件优化流程</text>
+  <text x="800" y="96" class="muted" font-size="15" text-anchor="middle">人定义目标 · AI 分析与实现 · 仿真/EDA 提供证据 · 人决定保留或回退</text>
+
+  <!-- Main flow arrows are drawn before blocks. -->
+  <path d="M230 285 L270 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M450 285 L490 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M680 285 L720 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M910 285 L930 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1140 285 L1170 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1350 285 L1380 285" class="arrow" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <!-- Rejected candidates loop back to analysis. -->
+  <path d="M1260 350 L1260 455" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+  <path d="M1080 500 L585 500 L585 350" class="dash" stroke-width="2.7" marker-end="url(#arrow)"/>
+  <text x="835" y="486" class="muted" font-size="13" text-anchor="middle">记录失败原因，回到可信 base，提出下一项候选</text>
+
+  <!-- Ownership tags. -->
+  <rect x="55" y="155" width="175" height="38" rx="4" class="human" stroke-width="2"/>
+  <text x="142.5" y="180" class="title" font-size="15" font-weight="700" text-anchor="middle">HUMAN</text>
+  <rect x="270" y="155" width="640" height="38" rx="4" class="ai" stroke-width="2"/>
+  <text x="590" y="180" class="title" font-size="15" font-weight="700" text-anchor="middle">AI ENGINEERING</text>
+  <rect x="930" y="155" width="210" height="38" rx="4" class="tool" stroke-width="2"/>
+  <text x="1035" y="180" class="title" font-size="15" font-weight="700" text-anchor="middle">VERIFICATION / EDA</text>
+  <rect x="1170" y="155" width="180" height="38" rx="4" class="human" stroke-width="2"/>
+  <text x="1260" y="180" class="title" font-size="15" font-weight="700" text-anchor="middle">HUMAN GATE</text>
+  <rect x="1380" y="155" width="165" height="38" rx="4" class="git" stroke-width="2"/>
+  <text x="1462.5" y="180" class="title" font-size="15" font-weight="700" text-anchor="middle">AI + GIT</text>
+
+  <!-- Step 1 -->
+  <rect x="55" y="220" width="175" height="130" class="canvas"/>
+  <rect x="55" y="220" width="175" height="130" class="human" stroke-width="2.8"/>
+  <text x="142.5" y="252" class="serif" font-size="22" text-anchor="middle">目标与约束</text>
+  <line x1="75" y1="265" x2="210" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="142.5" y="290" class="title" font-size="14" text-anchor="middle">T = cycles × period</text>
+  <text x="142.5" y="315" class="muted" font-size="13" text-anchor="middle">时序不恶化</text>
+  <text x="142.5" y="337" class="muted" font-size="13" text-anchor="middle">周期 · 面积 · 功耗</text>
+
+  <!-- Step 2 -->
+  <rect x="270" y="220" width="180" height="130" class="canvas"/>
+  <rect x="270" y="220" width="180" height="130" class="ai" stroke-width="2.8"/>
+  <text x="360" y="252" class="serif" font-size="22" text-anchor="middle">读取上下文</text>
+  <line x1="290" y1="265" x2="430" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="360" y="291" class="muted" font-size="13" text-anchor="middle">RTL 与模块接口</text>
+  <text x="360" y="314" class="muted" font-size="13" text-anchor="middle">Git 历史与实验记录</text>
+  <text x="360" y="337" class="muted" font-size="13" text-anchor="middle">STA / PPA 报告</text>
+
+  <!-- Step 3 -->
+  <rect x="490" y="220" width="190" height="130" class="canvas"/>
+  <rect x="490" y="220" width="190" height="130" class="design" stroke-width="2.8"/>
+  <text x="585" y="252" class="serif" font-size="22" text-anchor="middle">分析与提案</text>
+  <line x1="510" y1="265" x2="660" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="585" y="291" class="muted" font-size="13" text-anchor="middle">定位关键路径</text>
+  <text x="585" y="314" class="muted" font-size="13" text-anchor="middle">门延迟与扇出估算</text>
+  <text x="585" y="337" class="muted" font-size="13" text-anchor="middle">提出架构候选与风险</text>
+
+  <!-- Step 4 -->
+  <rect x="720" y="220" width="190" height="130" class="canvas"/>
+  <rect x="720" y="220" width="190" height="130" class="ai" stroke-width="2.8"/>
+  <text x="815" y="252" class="serif" font-size="22" text-anchor="middle">分支与实现</text>
+  <line x1="740" y1="265" x2="890" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="815" y="291" class="muted" font-size="13" text-anchor="middle">独立实验分支</text>
+  <text x="815" y="314" class="muted" font-size="13" text-anchor="middle">修改 RTL + 断言</text>
+  <text x="815" y="337" class="muted" font-size="13" text-anchor="middle">一次只验证一个主变量</text>
+
+  <!-- Step 5 -->
+  <rect x="930" y="220" width="210" height="130" class="canvas"/>
+  <rect x="930" y="220" width="210" height="130" class="tool" stroke-width="2.8"/>
+  <text x="1035" y="252" class="serif" font-size="22" text-anchor="middle">验证与量化</text>
+  <line x1="950" y1="265" x2="1120" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="1035" y="290" class="muted" font-size="13" text-anchor="middle">功能回归 · 多负载/多 seed</text>
+  <text x="1035" y="313" class="muted" font-size="13" text-anchor="middle">cycles · worst path</text>
+  <text x="1035" y="336" class="muted" font-size="13" text-anchor="middle">STA · Area · Power</text>
+
+  <!-- Step 6 decision -->
+  <polygon points="1260,220 1350,285 1260,350 1170,285" class="human" stroke-width="2.8"/>
+  <text x="1260" y="275" class="serif" font-size="20" text-anchor="middle">满足目标？</text>
+  <text x="1260" y="300" class="muted" font-size="12" text-anchor="middle">功能通过</text>
+  <text x="1260" y="320" class="muted" font-size="12" text-anchor="middle">时序与 T 可接受</text>
+  <!-- Step 7 -->
+  <rect x="1380" y="220" width="165" height="130" class="canvas"/>
+  <rect x="1380" y="220" width="165" height="130" class="git" stroke-width="2.8"/>
+  <text x="1462.5" y="252" class="serif" font-size="21" text-anchor="middle">记录与发布</text>
+  <line x1="1400" y1="265" x2="1525" y2="265" class="arrow" stroke-width="1.5"/>
+  <text x="1462.5" y="291" class="muted" font-size="13" text-anchor="middle">实验数据 + SHA</text>
+  <text x="1462.5" y="314" class="muted" font-size="13" text-anchor="middle">文档与架构图</text>
+  <text x="1462.5" y="337" class="muted" font-size="13" text-anchor="middle">提交到 GitHub</text>
+
+  <!-- Rejection handling -->
+  <rect x="1080" y="455" width="360" height="90" class="canvas"/>
+  <rect x="1080" y="455" width="360" height="90" class="reject" stroke-width="2.5"/>
+  <text x="1260" y="487" class="serif" font-size="21" text-anchor="middle">Reject &amp; Rollback</text>
+  <text x="1260" y="516" class="muted" font-size="13" text-anchor="middle">不保留时序恶化、收益不足或基线不可信的候选</text>
+  <text x="1280" y="392" class="title" font-size="13">否决</text>
+
+  <!-- Responsibility summary -->
+  <rect x="70" y="650" width="430" height="105" class="canvas"/>
+  <rect x="70" y="650" width="430" height="105" class="human" stroke-width="2.3"/>
+  <text x="285" y="682" class="serif" font-size="21" text-anchor="middle">人的职责</text>
+  <text x="285" y="712" class="title" font-size="14" text-anchor="middle">给出目标、约束与优先级</text>
+  <text x="285" y="735" class="muted" font-size="13" text-anchor="middle">根据证据决定保留、回退或继续迭代</text>
+
+  <rect x="585" y="650" width="430" height="105" class="canvas"/>
+  <rect x="585" y="650" width="430" height="105" class="ai" stroke-width="2.3"/>
+  <text x="800" y="682" class="serif" font-size="21" text-anchor="middle">AI 的职责</text>
+  <text x="800" y="712" class="title" font-size="14" text-anchor="middle">分析、提出候选、修改代码、组织实验</text>
+  <text x="800" y="735" class="muted" font-size="13" text-anchor="middle">维护分支、实验日志、图表和汇报材料</text>
+
+  <rect x="1100" y="650" width="430" height="105" class="canvas"/>
+  <rect x="1100" y="650" width="430" height="105" class="tool" stroke-width="2.3"/>
+  <text x="1315" y="682" class="serif" font-size="21" text-anchor="middle">工具的职责</text>
+  <text x="1315" y="712" class="title" font-size="14" text-anchor="middle">仿真检查功能与周期数</text>
+  <text x="1315" y="735" class="muted" font-size="13" text-anchor="middle">综合与 STA/PPA 提供客观、可复现的数据</text>
+
+  <rect x="255" y="790" width="1090" height="42" class="note" stroke-width="2"/>
+  <text x="800" y="817" class="title" font-size="15" font-weight="700" text-anchor="middle">核心原则：AI 生成工程候选，工具验证客观结果，人负责最终取舍；代理结果不能替代正式签核。</text>
+</svg>

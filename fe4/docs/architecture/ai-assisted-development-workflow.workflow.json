@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI-Assisted Hardware Optimization",
+    "subtitle": "Human goals, AI engineering, tool evidence, and versioned decisions",
+    "output": "ai-assisted-development-workflow.html"
+  },
+  "lanes": [
+    { "id": "human", "label": "Human Decisions" },
+    { "id": "ai", "label": "AI Engineering" },
+    { "id": "git", "label": "Git / Baseline" },
+    { "id": "tools", "label": "Verification & EDA" }
+  ],
+  "nodes": [
+    { "id": "goal", "lane": "human", "col": 0, "type": "external", "label": "Set Targets", "sublabel": "T / timing", "width": 96 },
+    { "id": "gate", "lane": "human", "col": 5, "type": "security", "label": "Review Evidence", "sublabel": "keep or reject", "tag": "human sign-off", "width": 106 },
+    { "id": "context", "lane": "ai", "col": 0, "type": "frontend", "label": "Read Context", "sublabel": "RTL + Git + reports", "width": 96 },
+    { "id": "analyze", "lane": "ai", "col": 2, "type": "backend", "label": "Analyze", "sublabel": "paths + architecture", "width": 108 },
+    { "id": "implement", "lane": "ai", "col": 4, "type": "backend", "label": "Implement", "sublabel": "RTL + assertions", "width": 108 },
+    { "id": "report", "lane": "ai", "col": 5, "type": "frontend", "label": "Summarize", "sublabel": "result + diagram", "width": 98 },
+    { "id": "base", "lane": "git", "col": 0, "type": "database", "label": "Trusted Base", "sublabel": "stable SHA", "width": 96 },
+    { "id": "branch", "lane": "git", "col": 3, "type": "database", "label": "Experiment Branch", "sublabel": "one main change", "width": 118 },
+    { "id": "publish", "lane": "git", "col": 5, "type": "database", "label": "Commit / Push", "sublabel": "GitHub + log", "width": 104 },
+    { "id": "regress", "lane": "tools", "col": 2, "type": "messagebus", "label": "Regression", "sublabel": "quick / heavy / seeds", "width": 112 },
+    { "id": "ppa", "lane": "tools", "col": 4, "type": "cloud", "label": "STA / PPA", "sublabel": "cycles + worst path", "width": 112 }
+  ],
+  "edges": [
+    { "from": "goal", "to": "context", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "base", "to": "context", "label": "load baseline", "variant": "dashed", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "from": "context", "to": "analyze", "variant": "default" },
+    { "from": "analyze", "to": "branch", "label": "candidate", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "branch", "to": "implement", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "from": "implement", "to": "regress", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "regress", "to": "ppa", "label": "functional pass", "variant": "default" },
+    { "from": "ppa", "to": "gate", "label": "measured evidence", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "up-channel" },
+    { "from": "gate", "to": "report", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "report", "to": "publish", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "gate", "to": "analyze", "label": "reject / iterate", "variant": "security", "fromSide": "left", "toSide": "left", "route": "return-left" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "AI",
+      "items": [
+        "Read RTL, history, reports, and constraints",
+        "Propose and implement isolated candidates"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Tools",
+      "items": [
+        "Check function, cycles, timing, area, and power",
+        "Provide repeatable evidence"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Human",
+      "items": [
+        "Set priorities and approve tradeoffs",
+        "Keep, reject, or request another iteration"
+      ]
+    }
+  ]
+}
