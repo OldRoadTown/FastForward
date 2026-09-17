@@ -1,0 +1,12 @@
+read_verilog -sv synth/fe_blackbox.v rtl/*.v
+hierarchy -check -top ff
+proc
+flatten
+opt
+check -assert
+techmap
+opt
+abc -g AND
+clean
+stat
+ltp -noff
